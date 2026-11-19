@@ -1,9 +1,11 @@
 # dsh-tools
 
-Desktop utilities for [DeepSeek Harness](https://dsh.ai) — currently one tool:
-**Restart DSH**.
+Desktop utilities for [DeepSeek Harness](https://dsh.ai) — currently two tools:
+**Restart DSH** and **生成 / Generate**.
 
 ## What it adds
+
+### 1. Restart DSH (titlebar)
 
 A **更多 / More** button in the Windows caption bar (the strip at the top of the
 window that renders **应用** and **编辑**), with a dropdown that offers **重启
@@ -15,6 +17,16 @@ relaunches it.
 The button only exists in the desktop app's title bar. In a plain browser
 session (`dsh web`) nothing is rendered.
 
+### 2. Generate draft reply (composer)
+
+A **生成 / Generate** button in the composer's trailing controls (between the
+model picker and the send button). Clicking it sends the last assistant reply
+to the Host, which asks the configured model for a short intended-reply draft
+(1–3 sentences, same language as the conversation) and fills it into the input
+box, replacing whatever was typed. The button shows a spinner while streaming
+and surfaces `[code] message` on failure. If no assistant reply exists yet it
+says so and does nothing.
+
 ## How it works
 
 - The Client half waits for the preload-owned caption menubar
@@ -24,16 +36,27 @@ session (`dsh web`) nothing is rendered.
   'dsh-tools', …)`. The Host route is loopback-only and same-origin, and
   validates that its parent process really is the DeepSeek Harness executable
   recorded in `DSH_NODE_EXECUTABLE` before doing anything.
-- A detached PowerShell helper then stops the app and the Host, waits for both
-  PIDs to exit, and relaunches the executable. It logs to
-  `%TEMP%\dsh-tools-restart.log`.
+- A short-lived PowerShell wrapper (spawned hidden) starts the real helper via
+  WMI `Win32_Process.Create` (`ShowWindow=0`), so it survives the process tree
+  teardown: it stops the app and the Host (plus the Host's children), waits for
+  all PIDs to exit, relaunches the executable, and confirms the relaunch. It
+  logs to `%TEMP%\dsh-tools-restart.log`.
+- The Generate button registers into the `conversation.input.right` slot. The
+  Host's `suggest` method reads the reply text sent by the client (capped at
+  24 000 chars), calls `ctx.llm.prepareCall` with the model from
+  `agentDefaultModel.currentSelection()`, streams the answer, strips quotes and
+  code fences, and returns the draft. The client inserts it into the Lexical
+  composer via select-all + `insertText`.
 
 ## Verify / debug
 
 - `node scripts/smoke.mjs` — exercises the Host route handler offline
-  (envelope validation, loopback/same-origin rejection, dry-run restart plan).
+  (envelope validation, loopback/same-origin rejection, dry-run restart plan,
+  suggest happy path + failure codes).
 - The dropdown's error state shows the Host's failure message (for example when
   DSH runs outside the desktop app).
+- Host-side diagnostics go to `%TEMP%\dsh-tools-debug.log` (module load,
+  dispatch results, suggest timing).
 
 ## Limitations
 
@@ -41,3 +64,7 @@ session (`dsh web`) nothing is rendered.
   Host was not started by the desktop shell.
 - Restart is a force stop: running tasks are interrupted, though sessions stay
   durable and reopen after relaunch.
+- Generate needs the Host-side `llm` service (present in the desktop Web Host);
+  without it the button reports `llm-unavailable` instead of guessing a route.
+- The draft is a starting point: the model only sees the last assistant reply,
+  not the whole conversation.

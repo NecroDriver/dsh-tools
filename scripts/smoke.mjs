@@ -13,8 +13,15 @@ const check = (name, ok, detail = '') => {
 
 let route = null;
 let fetchRoute = null;
+const fibers = [];
 const ctx = {
   logger: { info: () => {}, warn: () => {}, error: () => {} },
+  // Runtime child fibers for optional services (llm / agentDefaultModel).
+  inject(names, cb) {
+    const fiber = { names, cb, disposed: false, dispose() { this.disposed = true; } };
+    fibers.push(fiber);
+    return fiber;
+  },
   // Static-inject shape: apply() reads ctx.webServer / ctx.connection directly.
   webServer: {
     register(def) { route = def; return () => { route = null; }; },
@@ -130,6 +137,46 @@ check('restart in non-desktop parent → refused (parent-mismatch or not-desktop
   && ['parent-mismatch', 'not-desktop'].includes(message.result?.error?.code)
   && message.result?.error?.details?.appPid !== undefined,
   `code=${message.result?.error?.code} parent=${message.result?.error?.details?.parentPath ?? '(none)'}`);
+
+// --- suggest: before any llm service is captured ---
+res = await post({ headers: baseHeaders, body: envelope('suggest', { lastReply: 'AI reply text', lang: 'zh' }) });
+message = JSON.parse(res.payload);
+check('suggest without llm service → ok:false llm-unavailable',
+  envelopeGuard(res.payload) && message.result?.ok === false
+  && message.result?.error?.code === 'llm-unavailable');
+res = await post({ headers: baseHeaders, body: envelope('suggest', { lastReply: '   ', lang: 'zh' }) });
+message = JSON.parse(res.payload);
+check('suggest with blank context → ok:false empty-context',
+  envelopeGuard(res.payload) && message.result?.ok === false
+  && message.result?.error?.code === 'empty-context');
+
+// --- suggest: capture fake llm + agentDefaultModel through the child fibers ---
+const seenPrepareCalls = [];
+const fakeLlm = {
+  prepareCall: async (config) => {
+    seenPrepareCalls.push(config);
+    return {
+      config: { provider: config.provider, model: config.model },
+      stream: async function* fakeStream() {
+        yield { type: 'reasoning-delta', index: 0, text: '(inner monologue must be ignored)' };
+        yield { type: 'text-delta', index: 1, text: '「好的，' };
+        yield { type: 'text-delta', index: 1, text: '就按方案A继续。」' };
+      },
+    };
+  },
+};
+const llmFiber = fibers.find((f) => f.names.includes('llm'));
+const selectorFiber = fibers.find((f) => f.names.includes('agentDefaultModel'));
+await llmFiber.cb({ llm: fakeLlm });
+await selectorFiber.cb({ agentDefaultModel: { currentSelection: () => ({ provider: 'deepseek', model: 'test-model' }) } });
+res = await post({ headers: baseHeaders, body: envelope('suggest', { lastReply: 'AI reply text', lang: 'zh' }) });
+message = JSON.parse(res.payload);
+check('suggest with llm → ok, draft accumulates text-delta only, quotes stripped, route from selection',
+  envelopeGuard(res.payload) && message.result?.ok === true
+  && message.result?.value?.draft === '好的，就按方案A继续。'
+  && seenPrepareCalls.at(-1)?.provider === 'deepseek'
+  && seenPrepareCalls.at(-1)?.model === 'test-model',
+  `draft=${JSON.stringify(message.result?.value?.draft)}`);
 
 // --- fetch leg (connection.fetch bus) ---
 const fakeRequest = ({ headers = {}, body = null, method = 'POST' } = {}) => ({

@@ -1,10 +1,18 @@
-# dsh-tools 交付报告（2026-11-19，v0.2.4）
+# dsh-tools 交付报告（2026-11-19，v0.3.0）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.2.4 已安装在 desktop profile（pnpm link 到本目录），Host fiber **active**。
+- 插件 `dsh-tools` v0.3.0 已安装在 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
 - **按钮重启已端到端验证成功**（v0.2.3，14:05 实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4 修复：重启过程中 WMI 助手弹「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper 新增 relaunch 观测行（`relaunch observed pid=N` / `NOT observed`）。
+- v0.3.0 新增：**输入栏「生成」按钮**（slot `conversation.input.right`）——点击后按最后一轮 AI 回复（DOM `[data-chat-flow-kind="assistant-step"]` 倒序取文本）经 Host `suggest` 方法调用 `ctx.llm`（模型取自 `agentDefaultModel.currentSelection()`）流式生成 1–3 句意向回复，剥引号/代码围栏后经 selectAll+insertText 填入 Lexical composer。失败显示 `[code] message`；无 AI 回复时报 `empty-context`；Host 无 llm 服务报 `llm-unavailable`。客户端 React require 失败时按钮静默降级（不影响标题栏 More 菜单）。
+
+## v0.3.0（2026-11-19 18:4x–19:0x）
+
+- Host（`index.js`）：`suggest` 方法 + `captureService()` 运行时子 fiber 捕获 `llm`/`agentDefaultModel`（服务缺席不炸 fiber，报 `llm-unavailable`）；输入截断 24000 字符、输出 220 tokens/60s 超时；zh/en 系统提示词（口语化、直接输出正文）。
+- Client（`client.js`）：`GenerateButton` 组件（idle/busy/done/error 状态机 + flash 复位）、`findLastAssistantText()`、`insertDraftIntoComposer()`；注册进 `conversation.input.right`（order:10）；`inject:['connection','slots']`。
+- 测试：smoke 17 项全过（新增 suggest 4 用例：无 llm/空上下文/正常流累积+剥引号+路由来自 selection）；two-stage 回归通过。
+- 部署：commit + push GitHub → `plugin_manager` 重装（git 源）→ 一次性脚本重启 → Web Host 载 v0.3.0 → 用户点击「生成」端到端验证。
 
 ## v0.2.4 修复（2026-11-19 14:1x）
 

@@ -17,6 +17,7 @@
 // apply() returns immediately; the only async work rides per-request.
 
 import { execFile, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -324,7 +325,103 @@ export function launchRestartHelper(facts, payload) {
 const METHODS = {
   restart: handleRestart,
   'restart.plan': async () => ({ ok: true, value: { ...desktopFacts(), scheduled: restartScheduled } }),
+  suggest: handleSuggest,
 };
+
+// ---- suggest: draft the user's next reply from the last AI reply ----
+//
+// The llm / agentDefaultModel services are captured through runtime child
+// fibers (ctx.inject inside apply) instead of the static export: if this Host
+// (e.g. the Web Host) does not provide them, the main fiber still boots and
+// every other tool keeps working — suggest just reports llm-unavailable.
+let llmService = null;
+let modelSelector = null;
+
+const SUGGEST_MAX_INPUT = 24000;   // chars of AI reply context sent to the model
+const SUGGEST_MAX_TOKENS = 220;
+const SUGGEST_TIMEOUT_MS = 60000;
+
+const SUGGEST_SYSTEMS = {
+  zh: '你在帮用户给 AI 编程助手写回复。下面给出 AI 助手最近一轮的回复内容。请站在用户角度起草一条简短的「意向回复」：用户看完这轮回复后最可能想说的话，例如确认方案、追问细节、要求修改、表达感谢或给出下一步指令。直接输出回复正文本身：1~3 句、口语自然、与输入语言一致，不要任何解释、引号、标题或多余格式。',
+  en: 'You draft the user\'s next reply to an AI coding assistant. The latest assistant reply is provided below. Write the short "intent reply" the user most likely wants to send after reading it — e.g. confirm the plan, ask a follow-up, request a change, thank, or give the next instruction. Output only the reply text itself: 1-3 sentences, natural tone, same language as the input, no explanations, quotes, headings or extra formatting.',
+};
+
+/** Extract and normalize the text a suggest draft will be based on. */
+export function prepareSuggestInput(rawReply) {
+  const text = String(rawReply ?? '').replace(/\u00a0/g, ' ').trim();
+  if (text === '') return '';
+  return text.length > SUGGEST_MAX_INPUT
+    ? `…${text.slice(text.length - SUGGEST_MAX_INPUT)}` : text;
+}
+
+/** Normalize the model output into a paste-ready draft. */
+export function cleanSuggestDraft(raw) {
+  let draft = String(raw ?? '').trim();
+  const fenced = draft.match(/^```[a-z]*\n([\s\S]*?)\n```$/i);
+  if (fenced !== null) draft = fenced[1].trim();
+  draft = draft.replace(/^[「"“'‘]+/, '').replace(/[」"”'’]+$/, '').trim();
+  if (draft.length > 2000) draft = draft.slice(0, 2000);
+  return draft;
+}
+
+async function handleSuggest(payload) {
+  if (!isRecord(payload) || typeof payload.lastReply !== 'string'
+    || prepareSuggestInput(payload.lastReply) === '') {
+    return failure('empty-context', 'No assistant reply text was provided to draft from.');
+  }
+  const lang = payload.lang === 'en' ? 'en' : 'zh';
+  const input = prepareSuggestInput(payload.lastReply);
+  if (llmService === null || typeof llmService.prepareCall !== 'function') {
+    return failure('llm-unavailable',
+      'The llm service is not available in this Host; the draft button needs it.');
+  }
+  let route = {};
+  try {
+    const selection = modelSelector !== null && typeof modelSelector.currentSelection === 'function'
+      ? modelSelector.currentSelection() : null;
+    if (selection !== null && typeof selection?.provider === 'string') route = selection;
+  } catch (error) {
+    debugLog(`suggest model selection failed: ${String(error?.message ?? error)}`);
+  }
+  if (typeof route.provider !== 'string' || route.provider === '') {
+    return failure('no-model', 'No default model selection is available for drafting.');
+  }
+  const started = Date.now();
+  const signal = AbortSignal.timeout(SUGGEST_TIMEOUT_MS);
+  let call;
+  try {
+    call = await llmService.prepareCall({ provider: route.provider, model: route.model, maxTokens: SUGGEST_MAX_TOKENS }, signal);
+  } catch (error) {
+    return failure('llm-call', String(error?.message ?? error), { provider: route.provider });
+  }
+  const message = {
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text: input }],
+    source: { kind: 'dsh-tools' },
+  };
+  const options = {
+    ...call.config,
+    messages: [message],
+    system: SUGGEST_SYSTEMS[lang],
+    purpose: 'dsh-tools-suggest',
+    signal,
+  };
+  let raw = '';
+  try {
+    for await (const chunk of call.stream(options)) {
+      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') raw += chunk.text;
+    }
+  } catch (error) {
+    return failure('llm-stream', String(error?.message ?? error), { provider: route.provider });
+  }
+  const draft = cleanSuggestDraft(raw);
+  if (draft === '') {
+    return failure('empty-draft', 'The model returned no usable draft text.');
+  }
+  debugLog(`suggest ok in=${input.length}ch out=${draft.length}ch ${Date.now() - started}ms`);
+  return { ok: true, value: { draft, lang } };
+}
 
 async function dispatch(method, payload) {
   const handler = Object.hasOwn(METHODS, method) ? METHODS[method] : undefined;
@@ -479,12 +576,44 @@ export function apply(ctx) {
       console.log(message);
     }
   };
-  log('[dsh-tools] host module loaded (v0.2.4)');
-  debugLog('host module loaded (v0.2.4)');
+  log('[dsh-tools] host module loaded (v0.3.0)');
+  debugLog('host module loaded (v0.3.0)');
   const stopRoute = installWebServerRoute(ctx, log);
   const stopFetch = installConnectionFetch(ctx, log);
+  // Runtime child fibers: capture optional services when this Host provides
+  // them. Pending forever is fine — suggest degrades to a clear error.
+  const stopLlm = captureService(ctx, 'llm', (service) => { llmService = service; }, () => { llmService = null; }, log);
+  const stopSelector = captureService(ctx, 'agentDefaultModel', (service) => { modelSelector = service; }, () => { modelSelector = null; }, log);
   return () => {
+    stopSelector();
+    stopLlm();
     stopFetch();
     stopRoute();
   };
+}
+
+/** Attach a runtime child fiber for one optional service; returns a stop(). */
+function captureService(ctx, serviceName, onReady, onLost, log) {
+  try {
+    if (typeof ctx?.inject !== 'function') return () => {};
+    // Named function (fn.name = serviceName) so the child fiber gets a unique
+    // plugin name inside the group.
+    const applyService = { [serviceName]: (serviceCtx) => {
+      const service = serviceCtx?.[serviceName];
+      if (service !== undefined && service !== null) {
+        onReady(service);
+        log(`[dsh-tools] ${serviceName} service captured`);
+        debugLog(`${serviceName} service captured`);
+      }
+      return () => onLost();
+    } }[serviceName];
+    const fiber = ctx.inject([serviceName], applyService);
+    return () => {
+      try { fiber?.dispose?.(); } catch { /* already gone */ }
+      onLost();
+    };
+  } catch (error) {
+    log(`[dsh-tools] ${serviceName} capture failed: ${error?.message ?? error}`, 'warn');
+    return () => {};
+  }
 }

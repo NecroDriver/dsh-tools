@@ -13,7 +13,12 @@
 
 window.__ModuleLoader__.load({
   id: 'dsh-tools',
-  factory() {
+  factory(require) {
+    // React for the composer slot render; if the loader cannot resolve it the
+    // generate button degrades away and the More menu still works.
+    let React = null;
+    try { React = require('react'); } catch { React = null; }
+
     const DICTS = {
       zh: {
         more: '更多',
@@ -24,6 +29,11 @@ window.__ModuleLoader__.load({
         close: '关闭',
         errorTitle: '重启失败',
         errorGeneric: '请求失败，请重试。',
+        generate: '生成',
+        generateTitle: '根据最后一轮 AI 回复起草一条意向回复',
+        generating: '生成中…',
+        generateNoReply: '未找到可参考的 AI 回复',
+        generateFailed: '生成失败',
       },
       en: {
         more: 'More',
@@ -34,6 +44,11 @@ window.__ModuleLoader__.load({
         close: 'Close',
         errorTitle: 'Restart failed',
         errorGeneric: 'Request failed; try again.',
+        generate: 'Draft',
+        generateTitle: 'Draft an intent reply from the latest AI reply',
+        generating: 'Drafting…',
+        generateNoReply: 'No AI reply found to reference',
+        generateFailed: 'Draft failed',
       },
     };
 
@@ -60,13 +75,60 @@ window.__ModuleLoader__.load({
 
     const RESTART_GLYPH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
 
+    const GEN_CSS = [
+      '.dsh-tools-gen{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;line-height:1;cursor:default;white-space:nowrap;}',
+      '.dsh-tools-gen:hover:not(:disabled),.dsh-tools-gen:focus-visible:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary);outline:none;}',
+      '.dsh-tools-gen:disabled{opacity:.6;}',
+      '.dsh-tools-gen.is-error{color:var(--dsw-alias-state-error-primary);max-width:280px;overflow:hidden;text-overflow:ellipsis;}',
+      '.dsh-tools-gen .dsh-tools-genIcon{display:inline-flex;flex:none;}',
+      '.dsh-tools-gen.is-busy .dsh-tools-genIcon{animation:dsh-tools-rot 1s linear infinite;}',
+    ].join('\n');
+
+    const GEN_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>';
+
+    function ensureGenStyles() {
+      if (document.getElementById('dsh-tools-gen-styles') !== null) return;
+      const style = document.createElement('style');
+      style.id = 'dsh-tools-gen-styles';
+      style.textContent = GEN_CSS;
+      document.head.append(style);
+    }
+
+    // The chat flow renders one [data-chat-flow-kind] row per node; assistant
+    // prose lives in kind="assistant-step" rows. innerText is the rendered
+    // markdown, which is exactly what a reader would reply to.
+    function findLastAssistantText() {
+      const rows = document.querySelectorAll('[data-chat-flow-kind="assistant-step"]');
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        const text = (rows[i].innerText ?? '').trim();
+        if (text !== '') return text;
+      }
+      return '';
+    }
+
+    // The composer is a Lexical contenteditable inside [data-composer-card];
+    // select-all + insertText goes through beforeinput, which Lexical applies.
+    function insertDraftIntoComposer(startNode, draft) {
+      const card = startNode?.closest?.('[data-composer-card]') ?? null;
+      const editor = card?.querySelector('[contenteditable="true"]') ?? null;
+      if (editor === null) return false;
+      editor.focus();
+      document.execCommand('selectAll', false, null);
+      const inserted = document.execCommand('insertText', false, draft);
+      if (inserted !== true) {
+        editor.textContent = draft;
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: draft }));
+      }
+      return true;
+    }
+
     function detectLang() {
       const lang = String(document.documentElement.lang ?? '').toLowerCase();
       return lang.startsWith('zh') ? 'zh' : 'en';
     }
 
     return {
-      inject: ['connection'],
+      inject: ['connection', 'slots'],
       apply(ctx) {
         const disposers = [];
         const keep = (dispose) => { disposers.push(dispose); return dispose; };
@@ -96,6 +158,90 @@ window.__ModuleLoader__.load({
 
         const call = (method, payload) =>
           ctx.connection.rpc.call('/api', 'dsh-tools', { method, payload });
+
+        // ---- composer "generate" button (slot conversation.input.right) ----
+        const registerGenerateButton = () => {
+          if (React === null || typeof ctx?.slots?.register !== 'function'
+            || typeof ctx.slots.inject !== 'function') {
+            return () => {};
+          }
+          ensureGenStyles();
+
+          const GenerateButton = () => {
+            const [state, setState] = React.useState('idle');   // idle | busy | done | error
+            const [note, setNote] = React.useState('');
+            const revertTimer = React.useRef(null);
+            React.useEffect(() => () => {
+              if (revertTimer.current !== null) clearTimeout(revertTimer.current);
+            }, []);
+
+            const flash = (message, ms) => {
+              setNote(message);
+              if (revertTimer.current !== null) clearTimeout(revertTimer.current);
+              revertTimer.current = setTimeout(() => { setState('idle'); setNote(''); }, ms);
+            };
+
+            const onGenerate = async (event) => {
+              if (state === 'busy') return;
+              const anchor = event?.currentTarget ?? document.activeElement;
+              const lastReply = findLastAssistantText();
+              if (lastReply === '') {
+                setState('error');
+                flash(t('generateNoReply'), 3000);
+                return;
+              }
+              setState('busy');
+              setNote(t('generating'));
+              try {
+                const result = await call('suggest', { lastReply, lang: lang === 'zh' ? 'zh' : 'en' });
+                if (result?.ok === true && typeof result.value?.draft === 'string' && result.value.draft !== '') {
+                  insertDraftIntoComposer(anchor, result.value.draft);
+                  setState('done');
+                  setNote(t('generate'));
+                } else {
+                  const err = result?.error;
+                  setState('error');
+                  flash(typeof err?.message === 'string' && err.message !== ''
+                    ? (err?.code ? `[${err.code}] ${err.message}` : err.message)
+                    : t('generateFailed'), 5000);
+                }
+              } catch (error) {
+                setState('error');
+                flash(error?.message ?? String(error), 5000);
+              }
+            };
+
+            const busy = state === 'busy';
+            const className = `dsh-tools-gen${busy ? ' is-busy' : ''}${state === 'error' ? ' is-error' : ''}`;
+            const label = state === 'busy' ? note : (state === 'error' ? note : t('generate'));
+            return React.createElement('button', {
+              type: 'button',
+              className,
+              title: state === 'error' ? note : t('generateTitle'),
+              disabled: busy,
+              onClick: (event) => { void onGenerate(event); },
+            },
+            React.createElement('span', {
+              className: 'dsh-tools-genIcon',
+              dangerouslySetInnerHTML: { __html: GEN_GLYPH },
+            }),
+            React.createElement('span', null, label));
+          };
+
+          const effectBody = () => ctx.slots.inject('conversation.input.right', () => {
+            const unregister = ctx.slots.register(
+              { name: 'conversation.input.right', id: 'dsh-tools-generate', order: 10, label: () => t('generate') },
+              () => React.createElement(GenerateButton),
+            );
+            return () => { try { unregister(); } catch { /* already gone */ } };
+          });
+          // ctx.effect ties the contribution to the fiber lifetime when the
+          // service exposes it; plain call otherwise.
+          if (typeof ctx.effect === 'function') {
+            return ctx.effect(effectBody, 'dsh-tools: generate button');
+          }
+          return effectBody();
+        };
 
         // ---- state ----
         let menuHost = null;        // the [data-windows-menu] element we mounted into
@@ -287,6 +433,13 @@ window.__ModuleLoader__.load({
           keep(() => bodyObserver.disconnect());
         }
         ensureMounted();
+
+        // Composer generate button (degrades silently without React/slots).
+        try {
+          keep(registerGenerateButton());
+        } catch (error) {
+          console.warn('[dsh-tools] generate button unavailable:', error);
+        }
 
         return () => {
           unmountButton();
