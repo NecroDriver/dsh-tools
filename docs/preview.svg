@@ -1,0 +1,35 @@
+<svg width="640" height="300" viewBox="0 0 640 300" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- dsh-tools detail preview: the caption bar gains a More button whose
+       dropdown offers a confirmed restart. Text-free line art in neutral grays
+       plus one blue accent so it reads in both light and dark themes. -->
+  <!-- caption bar strip -->
+  <rect x="40" y="56" width="560" height="44" rx="9" stroke="#8A93A3" stroke-width="1.6"/>
+  <!-- built-in caption menus (dim placeholders) -->
+  <rect x="56" y="68" width="44" height="20" rx="6" stroke="#A6AEBC" stroke-width="1.4"/>
+  <rect x="108" y="68" width="44" height="20" rx="6" stroke="#A6AEBC" stroke-width="1.4"/>
+  <!-- the More button (accent) -->
+  <rect x="160" y="68" width="44" height="20" rx="6" stroke="#3F6FE0" stroke-width="1.8"/>
+  <circle cx="172" cy="78" r="2.1" fill="#3F6FE0"/>
+  <circle cx="182" cy="78" r="2.1" fill="#3F6FE0"/>
+  <circle cx="192" cy="78" r="2.1" fill="#3F6FE0"/>
+  <!-- window controls -->
+  <circle cx="540" cy="78" r="4" stroke="#A6AEBC" stroke-width="1.4"/>
+  <circle cx="560" cy="78" r="4" stroke="#A6AEBC" stroke-width="1.4"/>
+  <circle cx="580" cy="78" r="4" stroke="#A6AEBC" stroke-width="1.4"/>
+  <!-- dropdown panel -->
+  <rect x="160" y="98" width="262" height="116" rx="10" stroke="#8A93A3" stroke-width="1.6"/>
+  <!-- restart row: circular arrow glyph + title and hint bars -->
+  <g transform="translate(172 116) scale(0.72)" stroke="#3F6FE0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="23 4 23 10 17 10"/>
+    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+  </g>
+  <rect x="200" y="124" width="150" height="8" rx="4" fill="#A6AEBC"/>
+  <rect x="200" y="138" width="118" height="6" rx="3" fill="#C3CAD6"/>
+  <!-- separator -->
+  <line x1="172" y1="162" x2="410" y2="162" stroke="#C3CAD6" stroke-width="1.4"/>
+  <!-- confirm area: text bars and two actions -->
+  <rect x="172" y="174" width="128" height="8" rx="4" fill="#A6AEBC"/>
+  <rect x="172" y="188" width="168" height="6" rx="3" fill="#C3CAD6"/>
+  <rect x="330" y="178" width="46" height="20" rx="6" stroke="#8A93A3" stroke-width="1.4"/>
+  <rect x="382" y="178" width="30" height="20" rx="6" fill="#3F6FE0"/>
+</svg>

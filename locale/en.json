@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "DSH tools",
+    "description": "Adds a More menu to the Windows caption bar (beside the App and Edit menus) with Restart DSH: one click stops the DeepSeek Harness desktop app and relaunches it. Running tasks are interrupted, and the dropdown asks for confirmation first. The button only appears in the desktop title bar; nothing is added in a plain browser.",
+    "detail": "docs/DETAIL.md"
+  }
+}

@@ -1,0 +1,7 @@
+# dsh-tools — one Host plugin entry: caption-bar utilities (More menu → restart).
+#
+# The loader resolves this package by name (installed into the profile) and
+# calls index.js apply(ctx, config). No configuration keys in v0.1.
+- insert:
+    - id: dsh-tools
+      name: 'dsh-tools'

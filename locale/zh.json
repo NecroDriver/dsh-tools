@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "DSH 工具箱",
+    "description": "在 Windows 标题栏菜单（“应用”“编辑”旁）增加“更多”按钮，下拉提供“重启 DSH”：确认后停止并重新启动 DeepSeek Harness 桌面版。重启会中断正在运行的任务，因此点击后会先确认。该按钮只在桌面版标题栏出现；纯浏览器环境不显示任何内容。",
+    "detail": "docs/DETAIL.zh.md"
+  }
+}

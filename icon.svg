@@ -1,0 +1,16 @@
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- dsh-tools: rounded tile in the official plugin-artwork blue gradient with a
+       white restart arrow (clockwise circular arrow, round-capped strokes, same
+       treatment as the rewind plugin's terminal-card glyph family). -->
+  <rect x="4" y="4" width="28" height="28" rx="8" fill="url(#dsh_tools_blue)" />
+  <g transform="translate(4.8 4.8) scale(1.1)" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="23 4 23 10 17 10" />
+    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+  </g>
+  <defs>
+    <linearGradient id="dsh_tools_blue" x1="18" y1="4" x2="18" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#69B9FF" />
+      <stop offset="1" stop-color="#324DE2" />
+    </linearGradient>
+  </defs>
+</svg>
