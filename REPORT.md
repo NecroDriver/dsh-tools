@@ -12,6 +12,8 @@
 
 - `client.js` 新增 `registerHistoryNavigation()`：document 级 keydown **捕获阶段**监听（capture:true + preventDefault + stopPropagation 压过 Lexical）；`readHistory()` 每次按键实时查询 user 行；`isCaretAtVeryStart()` 沿 firstChild 链找首个文本节点判定光标在最前；`loadInto()`=selectAll+insertText+InputEvent；指针语义：null=活草稿位，进入历史模式时暂存 draft，任何非↑/↓键即退出（不恢复草稿，用户接管）；IME 组合中/修饰键不拦截。
 - 无 Host 改动、无新增文案（静默功能）。package.json 0.4.0。
+- v0.4.1：修复 index.js 模块加载日志的版本串（一直打 v0.3.0，今晚排障时造成误读）。
+- v0.4.2：刷新插件页描述（旧文案还写「点击后会先确认」，且未提生成/历史两个新功能）；仓库 git config 固定 credential.github.com.account=NecroDriver（GCM 不再弹账号选择）。
 
 ## v0.3.0（2026-11-19 18:4x–19:0x）
 
