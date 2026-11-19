@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "DSH tools",
-    "description": "Adds a More menu to the Windows caption bar (beside the App and Edit menus) with Restart DSH: one click stops the DeepSeek Harness desktop app and relaunches it. Running tasks are interrupted, and the dropdown asks for confirmation first. The button only appears in the desktop title bar; nothing is added in a plain browser.",
+    "description": "Three desktop utilities: 1) a More menu in the Windows caption bar offering Restart DSH — one click restarts immediately (⚠ running tasks are interrupted, no confirmation dialog); 2) a Generate button in the composer that drafts an intended reply from the last assistant message and fills it into the input box; 3) terminal-style input history — press ArrowUp/ArrowDown in the composer to cycle through the messages you sent in this session, past the newest one your draft is restored. The titlebar button is desktop-only; nothing is added in a plain browser.",
     "detail": "docs/DETAIL.md"
   }
 }
