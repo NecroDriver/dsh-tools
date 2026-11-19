@@ -576,8 +576,8 @@ export function apply(ctx) {
       console.log(message);
     }
   };
-  log('[dsh-tools] host module loaded (v0.3.0)');
-  debugLog('host module loaded (v0.3.0)');
+  log('[dsh-tools] host module loaded (v0.4.0)');
+  debugLog('host module loaded (v0.4.0)');
   const stopRoute = installWebServerRoute(ctx, log);
   const stopFetch = installConnectionFetch(ctx, log);
   // Runtime child fibers: capture optional services when this Host provides
