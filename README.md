@@ -1,7 +1,7 @@
 # dsh-tools
 
-Desktop utilities for [DeepSeek Harness](https://dsh.ai) — currently two tools:
-**Restart DSH** and **生成 / Generate**.
+Desktop utilities for [DeepSeek Harness](https://dsh.ai) — currently three
+tools: **Restart DSH**, **生成 / Generate**, and **↑/↓ input history**.
 
 ## What it adds
 
@@ -26,6 +26,17 @@ to the Host, which asks the configured model for a short intended-reply draft
 box, replacing whatever was typed. The button shows a spinner while streaming
 and surfaces `[code] message` on failure. If no assistant reply exists yet it
 says so and does nothing.
+
+### 3. Input history (composer, ↑/↓)
+
+Terminal-style: with the caret in the composer, **ArrowUp** loads the previous
+message you sent into the input box (replacing its content), **ArrowDown**
+walks back toward the newest, and cycling past the newest restores the draft
+you were typing. History mode only engages when the box is empty or the caret
+is at the very start of the text, so plain caret movement in multi-line drafts
+keeps working; any other key hands control back to normal editing. History is
+read live from the transcript (`[data-chat-flow-kind="user"]` rows), so it
+always matches what the session shows.
 
 ## How it works
 

@@ -1,11 +1,17 @@
-# dsh-tools 交付报告（2026-11-19，v0.3.0）
+# dsh-tools 交付报告（2026-11-19，v0.4.0）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.3.0 已安装在 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
+- 插件 `dsh-tools` v0.4.0 安装于 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
 - **按钮重启已端到端验证成功**（v0.2.3，14:05 实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
-- v0.2.4 修复：重启过程中 WMI 助手弹「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper 新增 relaunch 观测行（`relaunch observed pid=N` / `NOT observed`）。
-- v0.3.0 新增：**输入栏「生成」按钮**（slot `conversation.input.right`）——点击后按最后一轮 AI 回复（DOM `[data-chat-flow-kind="assistant-step"]` 倒序取文本）经 Host `suggest` 方法调用 `ctx.llm`（模型取自 `agentDefaultModel.currentSelection()`）流式生成 1–3 句意向回复，剥引号/代码围栏后经 selectAll+insertText 填入 Lexical composer。失败显示 `[code] message`；无 AI 回复时报 `empty-context`；Host 无 llm 服务报 `llm-unavailable`。客户端 React require 失败时按钮静默降级（不影响标题栏 More 菜单）。
+- v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
+- v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer；19:11 部署后 Web Host 确认 `llm service captured`，用户验证中。
+- v0.4.0：**输入历史 ↑/↓**（终端式）——光标在输入框时 ↑ 载入上一条**用户已发送消息**（DOM `[data-chat-flow-kind="user"]` 实时读取），↓ 向最新回走，越过最新恢复原草稿；仅输入框空/光标在文本最前时进入历史模式（不打断多行编辑的光标移动），其他任意键交还正常编辑。纯客户端 keydown 捕获实现。
+
+## v0.4.0（2026-11-19 19:3x）
+
+- `client.js` 新增 `registerHistoryNavigation()`：document 级 keydown **捕获阶段**监听（capture:true + preventDefault + stopPropagation 压过 Lexical）；`readHistory()` 每次按键实时查询 user 行；`isCaretAtVeryStart()` 沿 firstChild 链找首个文本节点判定光标在最前；`loadInto()`=selectAll+insertText+InputEvent；指针语义：null=活草稿位，进入历史模式时暂存 draft，任何非↑/↓键即退出（不恢复草稿，用户接管）；IME 组合中/修饰键不拦截。
+- 无 Host 改动、无新增文案（静默功能）。package.json 0.4.0。
 
 ## v0.3.0（2026-11-19 18:4x–19:0x）
 

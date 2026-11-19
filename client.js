@@ -122,6 +122,102 @@ window.__ModuleLoader__.load({
       return true;
     }
 
+    // Terminal-style input history: with the caret in the composer, ArrowUp
+    // loads the previous message you sent, ArrowDown walks back toward the
+    // newest; cycling past the newest restores the draft you were typing.
+    // Reading the history from the DOM ([data-chat-flow-kind="user"] rows)
+    // keeps it always in sync with what the session actually shows.
+    function registerHistoryNavigation() {
+      if (typeof document === 'undefined' || typeof window === 'undefined') return () => {};
+
+      const editorFor = (node) => {
+        const card = node?.closest?.('[data-composer-card]');
+        return card?.querySelector('[contenteditable="true"]') ?? null;
+      };
+
+      const readHistory = () => {
+        const rows = document.querySelectorAll('[data-chat-flow-kind="user"]');
+        const items = [];
+        for (const row of rows) {
+          const text = (row.innerText ?? '').trim();
+          if (text !== '') items.push(text);
+        }
+        return items;
+      };
+
+      const isCaretAtVeryStart = (editor) => {
+        const selection = window.getSelection();
+        if (selection === null || !selection.isCollapsed) return false;
+        if ((editor.textContent ?? '') === '') return true;
+        let node = editor.firstChild;
+        while (node !== null) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            return selection.anchorNode === node && selection.anchorOffset === 0;
+          }
+          if (node.nodeType !== Node.ELEMENT_NODE) { node = node.nextSibling; continue; }
+          node = node.firstChild ?? node.nextSibling;
+        }
+        return false;
+      };
+
+      let pointer = null;   // null = at the live draft; otherwise index into history
+      let draft = '';
+      const loadInto = (editor, text) => {
+        editor.focus();
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, text);
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+      };
+
+      const onKeyDown = (event) => {
+        const editor = editorFor(event.target);
+        if (editor === null) return;
+        if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) {
+          pointer = null;
+          return;
+        }
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+          const history = readHistory();
+          if (event.key === 'ArrowUp') {
+            if (pointer === null) {
+              if (history.length === 0) return;
+              // Only enter history mode from an empty box or the very start of
+              // the text — otherwise ArrowUp must keep moving the caret.
+              if (!isCaretAtVeryStart(editor)) return;
+              draft = editor.innerText ?? '';
+              pointer = history.length - 1;
+            } else {
+              pointer = Math.max(0, pointer - 1);
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            loadInto(editor, history[pointer]);
+            return;
+          }
+          if (pointer === null) return; // ArrowDown at the draft: caret moves normally
+          event.preventDefault();
+          event.stopPropagation();
+          const next = pointer + 1;
+          if (next >= history.length) {
+            pointer = null;
+            loadInto(editor, draft);
+          } else {
+            pointer = next;
+            loadInto(editor, history[next]);
+          }
+          return;
+        }
+        if (pointer !== null) pointer = null; // any other key: back to normal editing
+      };
+
+      document.addEventListener('keydown', onKeyDown, true);
+      return () => {
+        document.removeEventListener('keydown', onKeyDown, true);
+        pointer = null;
+      };
+    }
+
+
     function detectLang() {
       const lang = String(document.documentElement.lang ?? '').toLowerCase();
       return lang.startsWith('zh') ? 'zh' : 'en';
@@ -439,6 +535,13 @@ window.__ModuleLoader__.load({
           keep(registerGenerateButton());
         } catch (error) {
           console.warn('[dsh-tools] generate button unavailable:', error);
+        }
+
+        // Terminal-style ↑/↓ input history (plain DOM, always on).
+        try {
+          keep(registerHistoryNavigation());
+        } catch (error) {
+          console.warn('[dsh-tools] input history unavailable:', error);
         }
 
         return () => {
