@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "DSH tools",
-    "description": "Three desktop utilities: 1) a More menu in the Windows caption bar offering Restart DSH — one click restarts immediately (⚠ running tasks are interrupted, no confirmation dialog); 2) a Generate button in the composer that drafts an intended reply from the last assistant message and fills it into the input box; 3) terminal-style input history — press ArrowUp/ArrowDown in the composer to cycle through the messages you sent in this session, past the newest one your draft is restored. The titlebar button is desktop-only; nothing is added in a plain browser.",
+    "description": "Five utilities: 1) a More menu in the Windows caption bar offering Restart DSH — one click restarts immediately (⚠ running tasks are interrupted, no confirmation dialog); 2) a Generate button in the composer that drafts an intended reply from the last assistant message; 3) an Optimize button that rewrites the prompt in the composer into a version the AI understands and executes more easily (the composer locks while generating/optimizing and unlocks when done); 4) terminal-style input history — ArrowUp/ArrowDown in the composer cycles through the messages you sent this session; 5) Settings → Tools: toggle each feature independently and pick a faster custom model for generate/optimize. The titlebar button is desktop-only.",
     "detail": "docs/DETAIL.md"
   }
 }

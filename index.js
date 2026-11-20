@@ -18,9 +18,9 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -326,9 +326,166 @@ const METHODS = {
   restart: handleRestart,
   'restart.plan': async () => ({ ok: true, value: { ...desktopFacts(), scheduled: restartScheduled } }),
   suggest: handleSuggest,
+  optimize: handleOptimize,
+  'settings.get': async () => ({ ok: true, value: { settings: getSettings() } }),
+  'settings.set': handleSettingsSet,
+  'models.list': handleModelsList,
 };
 
-// ---- suggest: draft the user's next reply from the last AI reply ----
+// ---- settings: per-feature switches + assist model override ----
+//
+// Layout mirrors dsh-im-notify (all outside the package, survives reinstalls):
+//   <dshHome>/integrations/dsh-tools/settings.json
+// DSH_TOOLS_HOME overrides the directory wholesale (used by tests).
+
+const DEFAULT_SETTINGS = Object.freeze({
+  features: { moreMenu: true, generate: true, optimize: true, history: true },
+  model: { provider: '', model: '' },   // '' = follow the app's default model
+});
+
+function settingsDirectory() {
+  // DSH_TOOLS_HOME replaces the state directory wholesale (tests); the real
+  // layout mirrors dsh-im-notify: <dshHome>/integrations/dsh-tools.
+  if (process.env.DSH_TOOLS_HOME) return resolve(process.env.DSH_TOOLS_HOME);
+  const base = process.env.DSH_HOME ?? join(homedir(), '.dsh');
+  return resolve(base, 'integrations', 'dsh-tools');
+}
+
+function settingsFile() {
+  return join(settingsDirectory(), 'settings.json');
+}
+
+function mergeSettings(stored) {
+  const merged = {
+    features: { ...DEFAULT_SETTINGS.features },
+    model: { ...DEFAULT_SETTINGS.model },
+  };
+  if (isRecord(stored?.features)) {
+    for (const key of Object.keys(merged.features)) {
+      if (typeof stored.features[key] === 'boolean') merged.features[key] = stored.features[key];
+    }
+  }
+  if (isRecord(stored?.model)) {
+    if (typeof stored.model.provider === 'string') merged.model.provider = stored.model.provider;
+    if (typeof stored.model.model === 'string') merged.model.model = stored.model.model;
+  }
+  return merged;
+}
+
+let cachedSettings = null;
+
+/** Current settings (defaults merged with settings.json); never throws. */
+export function getSettings() {
+  if (cachedSettings !== null) return cachedSettings;
+  let stored = null;
+  try {
+    stored = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+  } catch { /* absent or corrupt → defaults */ }
+  cachedSettings = mergeSettings(stored);
+  return cachedSettings;
+}
+
+function saveSettings(next) {
+  cachedSettings = next;
+  try {
+    const file = settingsFile();
+    mkdirSync(settingsDirectory(), { recursive: true });
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+    renameSync(tmp, file);
+  } catch (error) {
+    debugLog(`settings save failed: ${String(error?.message ?? error)}`);
+  }
+  return next;
+}
+
+async function handleSettingsSet(payload) {
+  if (!isRecord(payload)) return failure('bad-request', 'settings.set needs an object payload.');
+  const current = getSettings();
+  const next = mergeSettings(current);
+  let changed = false;
+  if (isRecord(payload.features)) {
+    for (const key of Object.keys(next.features)) {
+      if (typeof payload.features[key] === 'boolean' && payload.features[key] !== next.features[key]) {
+        next.features[key] = payload.features[key];
+        changed = true;
+      }
+    }
+  }
+  if (isRecord(payload.model)) {
+    const provider = typeof payload.model.provider === 'string' ? payload.model.provider.trim() : next.model.provider;
+    const model = typeof payload.model.model === 'string' ? payload.model.model.trim() : next.model.model;
+    if (provider !== next.model.provider || model !== next.model.model) {
+      // A half-set override (provider without model) would surprise suggest;
+      // require both or neither.
+      const bothEmpty = provider === '' && model === '';
+      const bothSet = provider !== '' && model !== '';
+      if (!bothEmpty && !bothSet) {
+        return failure('bad-request', 'Model override needs both provider and model, or neither (empty strings).');
+      }
+      next.model = { provider, model };
+      changed = true;
+    }
+  }
+  if (changed) {
+    saveSettings(next);
+    debugLog(`settings updated ${JSON.stringify(next)}`);
+  }
+  return { ok: true, value: { settings: next } };
+}
+
+async function handleModelsList() {
+  if (llmService === null || typeof llmService.prepareCall !== 'function') {
+    return failure('llm-unavailable', 'The llm service is not available in this Host; model listing needs it.');
+  }
+  let providers = [];
+  try {
+    providers = await llmService.listProviders();
+    if (!Array.isArray(providers)) providers = [];
+  } catch (error) {
+    return failure('llm-call', `listProviders failed: ${String(error?.message ?? error)}`);
+  }
+  const groups = [];
+  for (const info of providers.slice(0, 12)) {
+    const provider = typeof info?.id === 'string' ? info.id : (typeof info?.name === 'string' ? info.name : null);
+    if (provider === null) continue;
+    let models = [];
+    try {
+      const list = await llmService.listModels(provider);
+      if (Array.isArray(list)) {
+        models = list.map((m) => {
+          const id = typeof m?.id === 'string' ? m.id : (typeof m?.model === 'string' ? m.model : String(m ?? ''));
+          const label = typeof m?.label === 'string' ? m.label : (typeof m?.displayName === 'string' ? m.displayName : id);
+          return { id, label };
+        }).filter((m) => m.id !== '');
+      }
+    } catch { /* provider without discovery still shows up */ }
+    groups.push({
+      provider,
+      label: typeof info?.label === 'string' ? info.label : provider,
+      models,
+    });
+  }
+  let selection = null;
+  try {
+    const current = modelSelector !== null && typeof modelSelector.currentSelection === 'function'
+      ? modelSelector.currentSelection() : null;
+    if (current !== null && typeof current?.provider === 'string') {
+      selection = { provider: current.provider, model: current.model ?? '' };
+    }
+  } catch { /* default selection is a bonus, not a requirement */ }
+  const settings = getSettings();
+  return {
+    ok: true,
+    value: {
+      providers: groups,
+      defaultSelection: selection,
+      override: settings.model,
+    },
+  };
+}
+
+// ---- suggest / optimize: two assistants over one shared LLM pipeline ----
 //
 // The llm / agentDefaultModel services are captured through runtime child
 // fibers (ctx.inject inside apply) instead of the static export: if this Host
@@ -337,13 +494,20 @@ const METHODS = {
 let llmService = null;
 let modelSelector = null;
 
-const SUGGEST_MAX_INPUT = 24000;   // chars of AI reply context sent to the model
+const SUGGEST_MAX_INPUT = 24000;   // chars of context sent to the model
 const SUGGEST_MAX_TOKENS = 220;
-const SUGGEST_TIMEOUT_MS = 60000;
+const OPTIMIZE_MAX_INPUT = 24000;
+const OPTIMIZE_MAX_TOKENS = 900;
+const ASSIST_TIMEOUT_MS = 60000;
 
 const SUGGEST_SYSTEMS = {
   zh: '你在帮用户给 AI 编程助手写回复。下面给出 AI 助手最近一轮的回复内容。请站在用户角度起草一条简短的「意向回复」：用户看完这轮回复后最可能想说的话，例如确认方案、追问细节、要求修改、表达感谢或给出下一步指令。直接输出回复正文本身：1~3 句、口语自然、与输入语言一致，不要任何解释、引号、标题或多余格式。',
   en: 'You draft the user\'s next reply to an AI coding assistant. The latest assistant reply is provided below. Write the short "intent reply" the user most likely wants to send after reading it — e.g. confirm the plan, ask a follow-up, request a change, thank, or give the next instruction. Output only the reply text itself: 1-3 sentences, natural tone, same language as the input, no explanations, quotes, headings or extra formatting.',
+};
+
+const OPTIMIZE_SYSTEMS = {
+  zh: '你在帮用户优化写给 AI 编程助手的提示词。下面是用户草拟的提示词原文。请改写为对 AI 更易懂、更易执行的版本：明确目标、补齐缺失的上下文与约束、理顺结构（可分点），但不改变用户的意图、语言和技术选型。保留原文中的代码、路径、标识符与专有名词。直接输出优化后的提示词本身，不要任何解释、前后缀、引号或代码围栏。',
+  en: 'You improve prompts written to an AI coding assistant. The user\'s draft prompt is provided below. Rewrite it into a version the AI can understand and execute more easily: make the goal explicit, fill in missing context and constraints, and organize the structure (bullet points are fine) — without changing the user\'s intent, language, or technology choices. Preserve any code, paths, identifiers, and proper nouns from the original. Output only the improved prompt itself: no explanations, wrappers, quotes, or code fences.',
 };
 
 /** Extract and normalize the text a suggest draft will be based on. */
@@ -364,33 +528,48 @@ export function cleanSuggestDraft(raw) {
   return draft;
 }
 
-async function handleSuggest(payload) {
-  if (!isRecord(payload) || typeof payload.lastReply !== 'string'
-    || prepareSuggestInput(payload.lastReply) === '') {
-    return failure('empty-context', 'No assistant reply text was provided to draft from.');
+/** Resolve which model an assist call uses: user override → app default. */
+function resolveAssistRoute() {
+  const settings = getSettings();
+  if (settings.model.provider !== '' && settings.model.model !== '') {
+    return { route: { provider: settings.model.provider, model: settings.model.model }, source: 'override' };
   }
-  const lang = payload.lang === 'en' ? 'en' : 'zh';
-  const input = prepareSuggestInput(payload.lastReply);
-  if (llmService === null || typeof llmService.prepareCall !== 'function') {
-    return failure('llm-unavailable',
-      'The llm service is not available in this Host; the draft button needs it.');
-  }
-  let route = {};
   try {
     const selection = modelSelector !== null && typeof modelSelector.currentSelection === 'function'
       ? modelSelector.currentSelection() : null;
-    if (selection !== null && typeof selection?.provider === 'string') route = selection;
+    if (selection !== null && typeof selection?.provider === 'string') {
+      return { route: selection, source: 'default' };
+    }
   } catch (error) {
-    debugLog(`suggest model selection failed: ${String(error?.message ?? error)}`);
+    debugLog(`assist model selection failed: ${String(error?.message ?? error)}`);
   }
+  return { route: {}, source: 'none' };
+}
+
+/** Shared streaming pipeline for suggest/optimize; returns a dispatch result. */
+async function runAssist(kind, payload) {
+  const lang = payload.lang === 'en' ? 'en' : 'zh';
+  const input = prepareSuggestInput(payload.source);
+  if (input === '') {
+    return failure('empty-context', kind === 'optimize'
+      ? 'The composer is empty — write a draft prompt first.'
+      : 'No assistant reply text was provided to draft from.');
+  }
+  if (llmService === null || typeof llmService.prepareCall !== 'function') {
+    return failure('llm-unavailable',
+      'The llm service is not available in this Host; this feature needs it.');
+  }
+  const { route } = resolveAssistRoute();
   if (typeof route.provider !== 'string' || route.provider === '') {
-    return failure('no-model', 'No default model selection is available for drafting.');
+    return failure('no-model', 'No model is configured for this feature (see dsh-tools settings).');
   }
+  const systems = kind === 'optimize' ? OPTIMIZE_SYSTEMS : SUGGEST_SYSTEMS;
+  const maxTokens = kind === 'optimize' ? OPTIMIZE_MAX_TOKENS : SUGGEST_MAX_TOKENS;
   const started = Date.now();
-  const signal = AbortSignal.timeout(SUGGEST_TIMEOUT_MS);
+  const signal = AbortSignal.timeout(ASSIST_TIMEOUT_MS);
   let call;
   try {
-    call = await llmService.prepareCall({ provider: route.provider, model: route.model, maxTokens: SUGGEST_MAX_TOKENS }, signal);
+    call = await llmService.prepareCall({ provider: route.provider, model: route.model, maxTokens }, signal);
   } catch (error) {
     return failure('llm-call', String(error?.message ?? error), { provider: route.provider });
   }
@@ -403,8 +582,8 @@ async function handleSuggest(payload) {
   const options = {
     ...call.config,
     messages: [message],
-    system: SUGGEST_SYSTEMS[lang],
-    purpose: 'dsh-tools-suggest',
+    system: systems[lang],
+    purpose: `dsh-tools-${kind}`,
     signal,
   };
   let raw = '';
@@ -417,10 +596,24 @@ async function handleSuggest(payload) {
   }
   const draft = cleanSuggestDraft(raw);
   if (draft === '') {
-    return failure('empty-draft', 'The model returned no usable draft text.');
+    return failure('empty-draft', 'The model returned no usable text.');
   }
-  debugLog(`suggest ok in=${input.length}ch out=${draft.length}ch ${Date.now() - started}ms`);
+  debugLog(`${kind} ok in=${input.length}ch out=${draft.length}ch ${Date.now() - started}ms`);
   return { ok: true, value: { draft, lang } };
+}
+
+async function handleSuggest(payload) {
+  if (!isRecord(payload) || typeof payload.lastReply !== 'string') {
+    return failure('empty-context', 'No assistant reply text was provided to draft from.');
+  }
+  return runAssist('suggest', { source: payload.lastReply, lang: payload.lang });
+}
+
+async function handleOptimize(payload) {
+  if (!isRecord(payload) || typeof payload.prompt !== 'string') {
+    return failure('empty-context', 'The composer is empty — write a draft prompt first.');
+  }
+  return runAssist('optimize', { source: payload.prompt, lang: payload.lang });
 }
 
 async function dispatch(method, payload) {
@@ -576,8 +769,8 @@ export function apply(ctx) {
       console.log(message);
     }
   };
-  log('[dsh-tools] host module loaded (v0.4.0)');
-  debugLog('host module loaded (v0.4.0)');
+  log('[dsh-tools] host module loaded (v0.5.0)');
+  debugLog('host module loaded (v0.5.0)');
   const stopRoute = installWebServerRoute(ctx, log);
   const stopFetch = installConnectionFetch(ctx, log);
   // Runtime child fibers: capture optional services when this Host provides

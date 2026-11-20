@@ -34,6 +34,29 @@ window.__ModuleLoader__.load({
         generating: '生成中…',
         generateNoReply: '未找到可参考的 AI 回复',
         generateFailed: '生成失败',
+        optimize: '优化',
+        optimizeTitle: '优化输入框中的提示词，使其更易于 AI 理解',
+        optimizing: '优化中…',
+        optimizeEmpty: '输入框为空，先写下提示词再优化',
+        optimizeFailed: '优化失败',
+        settingsTitle: '工具设置',
+        settingsIntro: '单独开关 dsh-tools 的各项功能；生成/优化可选用更快的模型。',
+        fMoreMenu: '标题栏「更多」菜单（重启 DSH）',
+        fGenerate: '输入栏「生成」按钮（意向回复）',
+        fOptimize: '输入栏「优化」按钮（提示词优化）',
+        fHistory: '↑/↓ 输入历史',
+        modelTitle: '生成 / 优化模型',
+        modelFollow: '跟随应用默认模型',
+        modelProvider: '提供方',
+        modelModel: '模型',
+        modelCustom: '自定义（选择更快的模型）',
+        save: '保存',
+        saving: '保存中…',
+        saved: '已保存',
+        saveFailed: '保存失败',
+        modelsLoading: '正在加载模型列表…',
+        modelsFailed: '模型列表加载失败',
+        modelsEmpty: '未发现可用模型',
       },
       en: {
         more: 'More',
@@ -49,8 +72,44 @@ window.__ModuleLoader__.load({
         generating: 'Drafting…',
         generateNoReply: 'No AI reply found to reference',
         generateFailed: 'Draft failed',
+        optimize: 'Optimize',
+        optimizeTitle: 'Rewrite the prompt in the composer so the AI understands it better',
+        optimizing: 'Optimizing…',
+        optimizeEmpty: 'The composer is empty — write a prompt first',
+        optimizeFailed: 'Optimize failed',
+        settingsTitle: 'Tools',
+        settingsIntro: 'Toggle each dsh-tools feature; pick a faster model for draft/optimize.',
+        fMoreMenu: 'Titlebar "More" menu (restart DSH)',
+        fGenerate: 'Composer "Draft" button (intent reply)',
+        fOptimize: 'Composer "Optimize" button (prompt rewrite)',
+        fHistory: '↑/↓ input history',
+        modelTitle: 'Draft / Optimize model',
+        modelFollow: 'Follow the app default model',
+        modelProvider: 'Provider',
+        modelModel: 'Model',
+        modelCustom: 'Custom (pick a faster model)',
+        save: 'Save',
+        saving: 'Saving…',
+        saved: 'Saved',
+        saveFailed: 'Save failed',
+        modelsLoading: 'Loading models…',
+        modelsFailed: 'Failed to load models',
+        modelsEmpty: 'No models discovered',
       },
     };
+
+    // Shared feature flags, refreshed from the Host settings on boot and after
+    // every save in the settings panel. Components and listeners read these
+    // live, so a toggle applies without re-registering slots.
+    const featureFlags = {
+      moreMenu: true,
+      generate: true,
+      optimize: true,
+      history: true,
+    };
+    const modelOverride = { provider: '', model: '' };
+    // apply() installs a hook so flag changes can (un)mount the caption menu.
+    const runtime = { applyFlags: null };
 
     const MENU_CSS = [
       '.dsh-tools-menu{position:absolute;top:calc(var(--dsh-windows-titlebar-height,40px) - 4px);z-index:1200;min-width:250px;padding:6px;border-radius:10px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 10px 30px rgba(0,0,0,.20);font:inherit;font-size:14px;color:var(--dsw-alias-label-primary);}',
@@ -82,9 +141,31 @@ window.__ModuleLoader__.load({
       '.dsh-tools-gen.is-error{color:var(--dsw-alias-state-error-primary);max-width:280px;overflow:hidden;text-overflow:ellipsis;}',
       '.dsh-tools-gen .dsh-tools-genIcon{display:inline-flex;flex:none;}',
       '.dsh-tools-gen.is-busy .dsh-tools-genIcon{animation:dsh-tools-rot 1s linear infinite;}',
+      // Composer lock while draft/optimize streams (user request 2026-11-20):
+      // the contenteditable stops accepting input and dims; buttons stay alive
+      // so the state is visible, and the lock releases on success OR failure.
+      '[data-composer-card][data-dsh-tools-locked] [contenteditable]{opacity:.5;pointer-events:none;}',
+      // ---- settings panel (settings.section slot) ----
+      '.dsh-tools-panel{display:flex;flex-direction:column;gap:16px;font-size:14px;color:var(--dsw-alias-label-primary);}',
+      '.dsh-tools-panel section{display:flex;flex-direction:column;gap:10px;}',
+      '.dsh-tools-panel h4{margin:0;font-size:13.5px;font-weight:600;}',
+      '.dsh-tools-panel p{margin:0;font-size:12.5px;color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-toggle{display:flex;align-items:center;gap:10px;padding:2px 0;}',
+      '.dsh-tools-toggle input[type=checkbox]{accent-color:var(--dsw-alias-brand-primary,#3b82f6);width:16px;height:16px;flex:none;}',
+      '.dsh-tools-radio{display:flex;align-items:center;gap:8px;padding:2px 0;}',
+      '.dsh-tools-radio input[type=radio]{accent-color:var(--dsw-alias-brand-primary,#3b82f6);width:15px;height:15px;flex:none;}',
+      '.dsh-tools-selects{display:flex;gap:10px;flex-wrap:wrap;padding-left:23px;}',
+      '.dsh-tools-select{flex:1;min-width:180px;padding:6px 8px;border-radius:7px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2,transparent);color:inherit;font:inherit;font-size:13px;}',
+      '.dsh-tools-panelFooter{display:flex;align-items:center;gap:12px;}',
+      '.dsh-tools-primary{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-brand-primary,#3b82f6);color:#fff;border-radius:7px;padding:6px 16px;font-size:13px;cursor:default;}',
+      '.dsh-tools-primary:disabled{opacity:.6;}',
+      '.dsh-tools-note{font-size:12.5px;color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-note.is-error{color:var(--dsw-alias-state-error-primary);}',
     ].join('\n');
 
     const GEN_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>';
+
+    const OPT_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h0"/><path d="M17.8 6.2L19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2L11 5"/></svg>';
 
     function ensureGenStyles() {
       if (document.getElementById('dsh-tools-gen-styles') !== null) return;
@@ -120,6 +201,32 @@ window.__ModuleLoader__.load({
         editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: draft }));
       }
       return true;
+    }
+
+    /** Current text of the composer nearest to startNode ('' when absent). */
+    function readComposerText(startNode) {
+      const card = startNode?.closest?.('[data-composer-card]') ?? null;
+      const editor = card?.querySelector('[contenteditable]') ?? null;
+      return editor === null ? '' : String(editor.innerText ?? '').trim();
+    }
+
+    /**
+     * Lock/unlock the composer while a draft/optimize request streams, so the
+     * user cannot race the model by typing over the box (user request
+     * 2026-11-20). Toggling contenteditable also stops Lexical from accepting
+     * beforeinput; pointer-events + dimming make the state visible.
+     */
+    function setComposerLock(startNode, locked) {
+      const card = startNode?.closest?.('[data-composer-card]') ?? null;
+      const editor = card?.querySelector('[contenteditable]') ?? null;
+      if (card === null || editor === null) return;
+      if (locked) {
+        card.setAttribute('data-dsh-tools-locked', '');
+        editor.setAttribute('contenteditable', 'false');
+      } else {
+        card.removeAttribute('data-dsh-tools-locked');
+        editor.setAttribute('contenteditable', 'true');
+      }
     }
 
     // Terminal-style input history: with the caret in the composer, ArrowUp
@@ -201,6 +308,7 @@ window.__ModuleLoader__.load({
       };
 
       const onKeyDown = (event) => {
+        if (!featureFlags.history) return;
         const editor = editorFor(event.target);
         if (editor === null) return;
         if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) {
@@ -286,15 +394,47 @@ window.__ModuleLoader__.load({
         const call = (method, payload) =>
           ctx.connection.rpc.call('/api', 'dsh-tools', { method, payload });
 
-        // ---- composer "generate" button (slot conversation.input.right) ----
-        const registerGenerateButton = () => {
+        // ---- composer assist buttons (slot conversation.input.right) ----
+        // One registrar, two slot items: 生成 (intent reply from the last AI
+        // reply) and 优化 (rewrite the prompt in the composer). Both lock the
+        // composer while their request streams and unlock it on settle.
+        const registerComposerButtons = () => {
           if (React === null || typeof ctx?.slots?.register !== 'function'
             || typeof ctx.slots.inject !== 'function') {
             return () => {};
           }
           ensureGenStyles();
 
-          const GenerateButton = () => {
+          // shared busy guard: only one assist flight at a time, per window
+          let assistBusy = false;
+
+          const runAssist = async (anchor, method, payload, messages) => {
+            if (assistBusy) return;
+            assistBusy = true;
+            setComposerLock(anchor, true);
+            try {
+              const result = await call(method, payload);
+              if (result?.ok === true && typeof result.value?.draft === 'string' && result.value.draft !== '') {
+                setComposerLock(anchor, false);
+                insertDraftIntoComposer(anchor, result.value.draft);
+                return { ok: true };
+              }
+              const err = result?.error;
+              return {
+                ok: false,
+                message: typeof err?.message === 'string' && err.message !== ''
+                  ? (typeof err?.code === 'string' && err.code !== '' ? `[${err.code}] ${err.message}` : err.message)
+                  : messages.failed,
+              };
+            } catch (error) {
+              return { ok: false, message: error?.message ?? String(error) };
+            } finally {
+              setComposerLock(anchor, false);
+              assistBusy = false;
+            }
+          };
+
+          const AssistButton = ({ kind }) => {
             const [state, setState] = React.useState('idle');   // idle | busy | done | error
             const [note, setNote] = React.useState('');
             const revertTimer = React.useRef(null);
@@ -308,64 +448,233 @@ window.__ModuleLoader__.load({
               revertTimer.current = setTimeout(() => { setState('idle'); setNote(''); }, ms);
             };
 
-            const onGenerate = async (event) => {
+            const enabled = kind === 'optimize' ? featureFlags.optimize : featureFlags.generate;
+
+            const onRun = async (event) => {
               if (state === 'busy') return;
               const anchor = event?.currentTarget ?? document.activeElement;
-              const lastReply = findLastAssistantText();
-              if (lastReply === '') {
-                setState('error');
-                flash(t('generateNoReply'), 3000);
-                return;
+              let payload;
+              if (kind === 'optimize') {
+                const prompt = readComposerText(anchor);
+                if (prompt === '') {
+                  setState('error');
+                  flash(t('optimizeEmpty'), 3000);
+                  return;
+                }
+                payload = { prompt, lang: lang === 'zh' ? 'zh' : 'en' };
+              } else {
+                const lastReply = findLastAssistantText();
+                if (lastReply === '') {
+                  setState('error');
+                  flash(t('generateNoReply'), 3000);
+                  return;
+                }
+                payload = { lastReply, lang: lang === 'zh' ? 'zh' : 'en' };
               }
               setState('busy');
-              setNote(t('generating'));
-              try {
-                const result = await call('suggest', { lastReply, lang: lang === 'zh' ? 'zh' : 'en' });
-                if (result?.ok === true && typeof result.value?.draft === 'string' && result.value.draft !== '') {
-                  insertDraftIntoComposer(anchor, result.value.draft);
-                  setState('done');
-                  setNote(t('generate'));
-                } else {
-                  const err = result?.error;
-                  setState('error');
-                  flash(typeof err?.message === 'string' && err.message !== ''
-                    ? (err?.code ? `[${err.code}] ${err.message}` : err.message)
-                    : t('generateFailed'), 5000);
-                }
-              } catch (error) {
+              setNote(kind === 'optimize' ? t('optimizing') : t('generating'));
+              const result = await runAssist(anchor, kind === 'optimize' ? 'optimize' : 'suggest', payload,
+                { failed: kind === 'optimize' ? t('optimizeFailed') : t('generateFailed') });
+              if (result.ok) {
+                setState('done');
+                setNote(kind === 'optimize' ? t('optimize') : t('generate'));
+                if (revertTimer.current !== null) clearTimeout(revertTimer.current);
+                revertTimer.current = setTimeout(() => { setState('idle'); setNote(''); }, 2000);
+              } else {
                 setState('error');
-                flash(error?.message ?? String(error), 5000);
+                flash(result.message, 5000);
               }
             };
 
             const busy = state === 'busy';
             const className = `dsh-tools-gen${busy ? ' is-busy' : ''}${state === 'error' ? ' is-error' : ''}`;
-            const label = state === 'busy' ? note : (state === 'error' ? note : t('generate'));
+            const idleLabel = kind === 'optimize' ? t('optimize') : t('generate');
+            const label = busy || state === 'error' ? note : (state === 'done' ? note : idleLabel);
             return React.createElement('button', {
               type: 'button',
               className,
-              title: state === 'error' ? note : t('generateTitle'),
+              title: state === 'error' ? note : (kind === 'optimize' ? t('optimizeTitle') : t('generateTitle')),
               disabled: busy,
-              onClick: (event) => { void onGenerate(event); },
+              onClick: (event) => { void onRun(event); },
             },
             React.createElement('span', {
               className: 'dsh-tools-genIcon',
-              dangerouslySetInnerHTML: { __html: GEN_GLYPH },
+              dangerouslySetInnerHTML: { __html: kind === 'optimize' ? OPT_GLYPH : GEN_GLYPH },
             }),
             React.createElement('span', null, label));
           };
 
+          const GenerateButton = () => (featureFlags.generate
+            ? React.createElement(AssistButton, { kind: 'generate' }) : null);
+          const OptimizeButton = () => (featureFlags.optimize
+            ? React.createElement(AssistButton, { kind: 'optimize' }) : null);
+
           const effectBody = () => ctx.slots.inject('conversation.input.right', () => {
-            const unregister = ctx.slots.register(
+            const disposers = [];
+            disposers.push(ctx.slots.register(
               { name: 'conversation.input.right', id: 'dsh-tools-generate', order: 10, label: () => t('generate') },
               () => React.createElement(GenerateButton),
-            );
-            return () => { try { unregister(); } catch { /* already gone */ } };
+            ));
+            disposers.push(ctx.slots.register(
+              { name: 'conversation.input.right', id: 'dsh-tools-optimize', order: 11, label: () => t('optimize') },
+              () => React.createElement(OptimizeButton),
+            ));
+            return () => { for (const dispose of disposers) { try { dispose(); } catch { /* already gone */ } } };
           });
           // ctx.effect ties the contribution to the fiber lifetime when the
           // service exposes it; plain call otherwise.
           if (typeof ctx.effect === 'function') {
-            return ctx.effect(effectBody, 'dsh-tools: generate button');
+            return ctx.effect(effectBody, 'dsh-tools: composer buttons');
+          }
+          return effectBody();
+        };
+
+        // ---- settings panel (slot settings.section) ----
+        const registerSettingsPanel = () => {
+          if (React === null || typeof ctx?.slots?.register !== 'function'
+            || typeof ctx.slots.inject !== 'function') {
+            return () => {};
+          }
+          ensureGenStyles();
+
+          const TOGGLES = [
+            ['moreMenu', 'fMoreMenu'],
+            ['generate', 'fGenerate'],
+            ['optimize', 'fOptimize'],
+            ['history', 'fHistory'],
+          ];
+
+          const ToolsPanel = () => {
+            const [flags, setFlags] = React.useState({ ...featureFlags });
+            const [custom, setCustom] = React.useState(modelOverride.provider !== '' && modelOverride.model !== '');
+            const [provider, setProvider] = React.useState(modelOverride.provider);
+            const [model, setModel] = React.useState(modelOverride.model);
+            const [providers, setProviders] = React.useState(null);   // null = loading
+            const [modelsError, setModelsError] = React.useState('');
+            const [saveState, setSaveState] = React.useState('idle'); // idle | busy | saved | error
+            const [saveNote, setSaveNote] = React.useState('');
+
+            React.useEffect(() => {
+              let alive = true;
+              (async () => {
+                try {
+                  const result = await call('models.list', {});
+                  if (!alive) return;
+                  if (result?.ok === true && Array.isArray(result.value?.providers)) {
+                    setProviders(result.value.providers);
+                  } else {
+                    setModelsError(result?.error?.message ?? t('modelsFailed'));
+                  }
+                } catch (error) {
+                  if (alive) setModelsError(error?.message ?? String(error));
+                }
+              })();
+              return () => { alive = false; };
+            }, []);
+
+            const providerModels = React.useMemo(() => {
+              if (providers === null) return [];
+              const group = providers.find((p) => p.provider === provider);
+              return Array.isArray(group?.models) ? group.models : [];
+            }, [providers, provider]);
+
+            const onSave = async () => {
+              setSaveState('busy');
+              setSaveNote(t('saving'));
+              const payload = {
+                features: Object.fromEntries(TOGGLES.map(([key]) => [key, flags[key] === true])),
+                model: custom && provider !== '' && model !== '' ? { provider, model } : { provider: '', model: '' },
+              };
+              try {
+                const result = await call('settings.set', payload);
+                if (result?.ok === true && result.value?.settings) {
+                  const settings = result.value.settings;
+                  Object.assign(featureFlags, settings.features);
+                  Object.assign(modelOverride, settings.model);
+                  setFlags({ ...featureFlags });
+                  runtime.applyFlags?.();
+                  setSaveState('saved');
+                  setSaveNote(t('saved'));
+                } else {
+                  setSaveState('error');
+                  setSaveNote(result?.error?.message ?? t('saveFailed'));
+                }
+              } catch (error) {
+                setSaveState('error');
+                setSaveNote(error?.message ?? String(error));
+              }
+            };
+
+            const toggleRow = (key, dictKey) => React.createElement('label', { className: 'dsh-tools-toggle', key: key },
+              React.createElement('input', {
+                type: 'checkbox',
+                checked: flags[key] === true,
+                onChange: (event) => setFlags({ ...flags, [key]: event.target.checked }),
+              }),
+              React.createElement('span', null, t(dictKey)));
+
+            const radio = (value, dictKey) => React.createElement('label', { className: 'dsh-tools-radio', key: value },
+              React.createElement('input', {
+                type: 'radio',
+                name: 'dsh-tools-model-mode',
+                checked: custom === value,
+                onChange: () => {
+                  setCustom(value);
+                  if (!value) { setProvider(''); setModel(''); }
+                },
+              }),
+              React.createElement('span', null, t(dictKey)));
+
+            return React.createElement('div', { className: 'dsh-tools-panel' },
+              React.createElement('section', null,
+                React.createElement('h4', null, t('settingsTitle')),
+                React.createElement('p', null, t('settingsIntro')),
+                ...TOGGLES.map(([key, dictKey]) => toggleRow(key, dictKey))),
+              React.createElement('section', null,
+                React.createElement('h4', null, t('modelTitle')),
+                radio(false, 'modelFollow'),
+                radio(true, 'modelCustom'),
+                custom ? React.createElement('div', { className: 'dsh-tools-selects' },
+                  React.createElement('select', {
+                    className: 'dsh-tools-select',
+                    value: provider,
+                    onChange: (event) => { setProvider(event.target.value); setModel(''); },
+                  },
+                  React.createElement('option', { value: '' }, `— ${t('modelProvider')} —`),
+                  ...(providers ?? []).map((p) => React.createElement('option', { key: p.provider, value: p.provider }, p.label ?? p.provider))),
+                  React.createElement('select', {
+                    className: 'dsh-tools-select',
+                    value: model,
+                    disabled: provider === '',
+                    onChange: (event) => setModel(event.target.value),
+                  },
+                  React.createElement('option', { value: '' }, `— ${t('modelModel')} —`),
+                  providerModels.map((m) => React.createElement('option', { key: m.id, value: m.id }, m.label ?? m.id))),
+                ) : null,
+                providers === null ? React.createElement('p', null, modelsError !== '' ? modelsError : t('modelsLoading'))
+                  : (modelsError !== '' ? React.createElement('p', { className: 'dsh-tools-note is-error' }, modelsError)
+                    : (providers.every((p) => !p.models?.length) ? React.createElement('p', null, t('modelsEmpty')) : null))),
+              React.createElement('div', { className: 'dsh-tools-panelFooter' },
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'dsh-tools-primary',
+                  disabled: saveState === 'busy' || (custom && (provider === '' || model === '')),
+                  onClick: (event) => { void onSave(event); },
+                }, t('save')),
+                saveNote !== '' ? React.createElement('span', {
+                  className: `dsh-tools-note${saveState === 'error' ? ' is-error' : ''}`,
+                }, saveNote) : null));
+          };
+
+          const effectBody = () => ctx.slots.inject('settings.section', () => {
+            const unregister = ctx.slots.register(
+              { name: 'settings.section', id: 'dsh-tools', order: 23, label: () => t('settingsTitle') },
+              () => React.createElement(ToolsPanel),
+            );
+            return () => { try { unregister(); } catch { /* already gone */ } };
+          });
+          if (typeof ctx.effect === 'function') {
+            return ctx.effect(effectBody, 'dsh-tools: settings panel');
           }
           return effectBody();
         };
@@ -548,11 +857,17 @@ window.__ModuleLoader__.load({
         };
 
         const ensureMounted = () => {
+          if (!featureFlags.moreMenu) { unmountButton(); return; }
           const host = document.querySelector('[data-windows-menu]');
           if (host === menuHost) return;
           unmountButton();
           if (host !== null) mountInto(host);
         };
+
+        // Flag changes coming back from the settings panel re-evaluate what
+        // renders. Slot items and the history handler read featureFlags live;
+        // only the caption menu owns real DOM that must be (un)mounted here.
+        runtime.applyFlags = () => { ensureMounted(); };
 
         if (document.body !== null) {
           const bodyObserver = new MutationObserver(ensureMounted);
@@ -561,11 +876,32 @@ window.__ModuleLoader__.load({
         }
         ensureMounted();
 
-        // Composer generate button (degrades silently without React/slots).
+        // Feature flags + model override from the Host settings; the defaults
+        // above render until this resolves, then adjust quietly.
+        (async () => {
+          try {
+            const result = await call('settings.get', {});
+            if (result?.ok === true && result.value?.settings) {
+              const settings = result.value.settings;
+              if (settings.features) Object.assign(featureFlags, settings.features);
+              if (settings.model) Object.assign(modelOverride, settings.model);
+              runtime.applyFlags?.();
+            }
+          } catch { /* defaults stay in effect */ }
+        })();
+
+        // Composer assist buttons (degrade silently without React/slots).
         try {
-          keep(registerGenerateButton());
+          keep(registerComposerButtons());
         } catch (error) {
-          console.warn('[dsh-tools] generate button unavailable:', error);
+          console.warn('[dsh-tools] composer buttons unavailable:', error);
+        }
+
+        // Settings section in the app settings page.
+        try {
+          keep(registerSettingsPanel());
+        } catch (error) {
+          console.warn('[dsh-tools] settings panel unavailable:', error);
         }
 
         // Terminal-style ↑/↓ input history (plain DOM, always on).
@@ -576,6 +912,7 @@ window.__ModuleLoader__.load({
         }
 
         return () => {
+          runtime.applyFlags = null;
           unmountButton();
           for (const dispose of disposers.splice(0)) {
             try { dispose(); } catch { /* already gone */ }

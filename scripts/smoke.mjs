@@ -3,6 +3,12 @@
 // route handler: envelope validation, admission (loopback + same-origin),
 // method dispatch, and the restart safety chain (this process's parent is a
 // shell, not the desktop app, so restart must refuse with parent-mismatch).
+// Settings persistence goes to a throwaway DSH_TOOLS_HOME (set before import —
+// the module caches settings and resolves the directory at call time).
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+process.env.DSH_TOOLS_HOME = mkdtempSync(join(tmpdir(), 'dsh-tools-smoke-'));
 import { apply } from '../index.js';
 
 const results = [];
@@ -178,6 +184,75 @@ check('suggest with llm → ok, draft accumulates text-delta only, quotes stripp
   && seenPrepareCalls.at(-1)?.model === 'test-model',
   `draft=${JSON.stringify(message.result?.value?.draft)}`);
 
+// --- settings: get defaults, set flags + model override, roundtrip on disk ---
+res = await post({ headers: baseHeaders, body: envelope('settings.get', {}) });
+message = JSON.parse(res.payload);
+check('settings.get → defaults with all features on',
+  envelopeGuard(res.payload) && message.result?.ok === true
+  && message.result?.value?.settings?.features?.moreMenu === true
+  && message.result?.value?.settings?.model?.provider === '');
+res = await post({ headers: baseHeaders, body: envelope('settings.set', { features: { generate: false, history: false }, model: { provider: 'fast', model: 'm-mini' } }) });
+message = JSON.parse(res.payload);
+check('settings.set accepts flags + full model override',
+  envelopeGuard(res.payload) && message.result?.ok === true
+  && message.result?.value?.settings?.features?.generate === false
+  && message.result?.value?.settings?.features?.history === false
+  && message.result?.value?.settings?.features?.moreMenu === true
+  && message.result?.value?.settings?.model?.provider === 'fast');
+res = await post({ headers: baseHeaders, body: envelope('settings.set', { model: { provider: 'fast', model: '' } }) });
+message = JSON.parse(res.payload);
+check('settings.set rejects half model override (provider without model)',
+  envelopeGuard(res.payload) && message.result?.ok === false
+  && message.result?.error?.code === 'bad-request');
+let settingsOnDisk = null;
+try { settingsOnDisk = JSON.parse(readFileSync(join(process.env.DSH_TOOLS_HOME, 'settings.json'), 'utf8')); } catch { /* fail below */ }
+check('settings persisted to DSH_TOOLS_HOME/settings.json',
+  settingsOnDisk?.features?.generate === false && settingsOnDisk?.model?.model === 'm-mini');
+
+// --- optimize: honors the settings model override, rewrites the prompt ---
+fakeLlm.prepareCall = async (config) => {
+  seenPrepareCalls.push(config);
+  return {
+    config: { provider: config.provider, model: config.model },
+    stream: async function* optStream() {
+      yield { type: 'text-delta', index: 0, text: '目标：修复登录超时。\n约束：仅改前端。' };
+    },
+  };
+};
+res = await post({ headers: baseHeaders, body: envelope('optimize', { prompt: '帮我修下登录老是超时', lang: 'zh' }) });
+message = JSON.parse(res.payload);
+check('optimize → ok and prepareCall uses the override model',
+  envelopeGuard(res.payload) && message.result?.ok === true
+  && message.result?.value?.draft === '目标：修复登录超时。\n约束：仅改前端。'
+  && seenPrepareCalls.at(-1)?.provider === 'fast'
+  && seenPrepareCalls.at(-1)?.model === 'm-mini',
+  `draft=${JSON.stringify(message.result?.value?.draft)}`);
+res = await post({ headers: baseHeaders, body: envelope('optimize', { prompt: '   ', lang: 'zh' }) });
+message = JSON.parse(res.payload);
+check('optimize with blank prompt → ok:false empty-context',
+  envelopeGuard(res.payload) && message.result?.ok === false
+  && message.result?.error?.code === 'empty-context');
+
+// --- models.list: providers + models via the captured llm service ---
+fakeLlm.listProviders = async () => [
+  { id: 'deepseek', label: 'DeepSeek' },
+  { id: 'fast-one' },
+];
+fakeLlm.listModels = async (provider) => (provider === 'deepseek'
+  ? [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner', label: 'Reasoner' }]
+  : [{ model: 'mini-fast' }]);
+res = await post({ headers: baseHeaders, body: envelope('models.list', {}) });
+message = JSON.parse(res.payload);
+const catalog = message.result?.value;
+check('models.list → providers with normalized models + default selection',
+  envelopeGuard(res.payload) && message.result?.ok === true
+  && catalog?.providers?.length === 2
+  && catalog?.providers?.[0]?.models?.[0]?.id === 'deepseek-chat'
+  && catalog?.providers?.[0]?.models?.[1]?.label === 'Reasoner'
+  && catalog?.providers?.[1]?.models?.[0]?.id === 'mini-fast'
+  && catalog?.defaultSelection?.provider === 'deepseek'
+  && catalog?.override?.provider === 'fast');
+
 // --- fetch leg (connection.fetch bus) ---
 const fakeRequest = ({ headers = {}, body = null, method = 'POST' } = {}) => ({
   method,
@@ -207,5 +282,8 @@ try {
 check('cleanup runs clean', disposed && route === null && fetchRoute === null);
 
 const failed = results.filter((entry) => !entry.ok || envelopeGuardFailed);
+if (failed.length === 0) {
+  try { rmSync(process.env.DSH_TOOLS_HOME, { recursive: true, force: true }); } catch { /* leave tmp dir */ }
+}
 console.log(failed.length === 0 ? 'ALL CHECKS PASSED' : `${failed.length} CHECK(S) FAILED`);
 process.exit(failed.length === 0 ? 0 : 1);
