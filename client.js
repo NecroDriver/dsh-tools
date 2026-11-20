@@ -135,11 +135,42 @@ window.__ModuleLoader__.load({
         return card?.querySelector('[contenteditable="true"]') ?? null;
       };
 
+      // User rows render the message text more than once (a visible copy plus
+      // a hidden preview/edit copy) and inline timestamps. Strip stamps, then
+      // collapse the "TEXT stamp TEXT" duplication so only the plain text the
+      // user actually typed remains.
+      const cleanHistoryText = (raw) => {
+        let text = String(raw ?? '').replace(/\u00a0/g, ' ');
+        // Inline stamps → newline separators (zh dates, times, en dates, ISO).
+        text = text
+          .replace(/\d{1,2}月\s*\d{1,2}日(\s*\d{1,2}:\d{2}(?::\d{2})?)?/g, '\n')
+          .replace(/\d{4}-\d{1,2}-\d{1,2}([T ]\d{1,2}:\d{2}(?::\d{2})?)?/g, '\n')
+          .replace(/\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(,?\s*\d{4})?\b/gi, '\n');
+        // Standalone time lines are dropped below; inline times inside a
+        // sentence ("会议改到 14:30") must survive.
+        const lines = text.split('\n').map((line) => line.trim())
+          .filter((line) => line !== ''
+            && !/^\d{1,2}:\d{2}(\s*[APap][Mm])?$/.test(line));
+        text = lines.join('\n').trim();
+        // Collapse exact duplicated halves ("TEXT\nTEXT" or "TEXTTEXT").
+        for (let round = 0; round < 2; round += 1) {
+          if (text.length < 8) break;
+          const mid = Math.floor(text.length / 2);
+          for (let cut = mid; cut >= mid - 400 && cut >= 4; cut -= 1) {
+            const head = text.slice(0, cut).trim();
+            const tail = text.slice(cut).trim();
+            if (head !== '' && head === tail) { text = head; cut = -1; round = 2; break; }
+          }
+          if (text.length < 8) break;
+        }
+        return text;
+      };
+
       const readHistory = () => {
         const rows = document.querySelectorAll('[data-chat-flow-kind="user"]');
         const items = [];
         for (const row of rows) {
-          const text = (row.innerText ?? '').trim();
+          const text = cleanHistoryText(row.innerText);
           if (text !== '') items.push(text);
         }
         return items;
