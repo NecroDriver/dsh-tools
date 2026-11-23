@@ -1,8 +1,8 @@
-# dsh-tools 交付报告（2026-11-23，v0.6.3）
+# dsh-tools 交付报告（2026-11-23，v0.6.4）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.6.2 安装于 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
+- 插件 `dsh-tools` v0.6.4 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.3 已装于 desktop profile 并上线验证：SC 面板 `sc.repos roots=5 … repos=13`。
 - **按钮重启已端到端验证成功**（v0.2.3 起多次实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
 - v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer。
@@ -11,6 +11,34 @@
 - v0.6.0：**「资源控制」面板**（类 VSCode；见下节）。
 - v0.6.1：**「更多 → 重载插件」**——热重载入口（见下节），回应「每次都重启打断任务」的问题；实证 install 即热替换，零重启。
 - v0.6.2：**资源控制入口迁至右侧「开始」工具栏**（与 工作区文件/新建终端/浏览网页 同级），面板改为右栏标签页（见下节）。
+- v0.6.4：**输入框上方常用语悬浮条**（点击插入光标处、最多 5 条、工具设置可编辑）+ **热替换根因修复（ctx.effect teardown）** + **资源控制分组默认折叠**（见下节）。
+
+## v0.6.4（2026-11-23）
+
+### 常用语悬浮条（用户 m02760：「在输入框上方悬浮一些常用语……支持编辑，最多展示5个，我一点击某个框，就把对应的语言添加到输入框光标后面」）
+
+- 挂载点：slot `conversation.input.overlay`（composer card 内首个子元素 `[data-composer-overlay]`，CSS `height:0;position:absolute;inset:0 0 auto` 的零高锚条）；chips 行 `position:absolute;top:0;transform:translateY(-100%)` 悬浮在输入框上方（card 无 overflow/contain 裁剪，探针实证）。
+- 插入语义：`insertPhraseAtCaret` = 找 card → `[contenteditable]` → `focus()` → `execCommand('insertText')`（**不 selectAll**，即插入光标处而非整体替换，与「生成/优化/历史」的替换语义不同）；失败兜底 beforeinput InputEvent。
+- 条数上限：`PHRASES_MAX=5`、单条 `PHRASE_MAX_LEN=200`；host `normalizePhrases`（trim/截断/去空/去重/cap 5）在 `settings.set` 与落盘合并两处生效；0 条或开关关闭时整条隐藏。
+- 编辑：工具设置面板新增常用语编辑区（逐行 input + 移除 + 添加，满 5 禁用），保存经 `settings.set {phrases:[…]}`；模块级 `phraseStore`（`useSyncExternalStore`）保存后即时刷新所有 composer 的悬浮条。
+- 开关：`featureFlags.phrases`（默认开）+ 工具设置新增独立开关。
+
+### 热替换根因修复：teardown 必须经 ctx.effect 注册
+
+- 决定性证据：对线上 `/api/dsh-tools` 直接 POST `dev.ping` → `Unknown method: dev.ping`（dev.ping 为 v0.6.1 新增）→ **实际服务的仍是 v0.6.0 fiber 的路由**；三次「热替换」（v0.6.1/2/3）只是导入了新模块（module loaded 日志 + captures），路由注册权从未移交。
+- 根因：apply() 一直用「返回值当清理函数」，Cordis 停 fiber 只调用 `ctx.effect()` 注册的 disposer，返回值被忽略 → 老 fiber 停止时 webServer/fetch 路由不注销 → 新 fiber `register` 同名路径抛「重复」被 try/catch 静默吞掉 → 永远老代码服务。旁证：dsh-im-notify/dshmarket 都用 `ctx.effect` 注册。
+- 修复：apply() 的 composite teardown（stopHmr→stopRegistry→stopSelector→stopLlm→stopFetch→stopRoute，幂等 guard）改为 `ctx.effect(() => teardown)` 注册（无 effect 的测试桩仍走返回值兜底）；路由 mount 成功/失败均 debugLog（`webServer route mounted` / `FAILED`）。
+- 影响：v0.6.4 起热替换真正生效（今后 install → 重载插件即可完整换代）；**本次上线仍需一次重启**——现网 v0.6.3 fiber 是老式清理，其路由只能由重启清除。
+
+### 资源控制分组默认折叠（用户 m03007：「打开资源控制页面的时候默认所有栏目关闭状态」）
+
+- ScPanel 折叠态反转为展开态：`collapsed[repo.id]===true` → `expanded[repo.id]===true`（默认全部折叠，仅用户显式展开的仓库打开）；chevron/文件区逻辑同步翻转。
+- 测试：test-client-render.cjs 新增「repo group collapsed by default」→ 点击组头展开 → 文件行出现，全套重跑通过。
+
+### v0.6.4 测试与部署
+
+- smoke.mjs 32 项全过（新增：phrases 归一化/落盘持久化、ctx.effect teardown 注册与幂等）；test-client-render.cjs 36 项全过（phrase bar 注册/chips 渲染/光标插入（无 selectAll）/编辑区/添加钮）；test-sc.mjs 17 项、test-two-stage.cjs 回归过。
+- package.json 0.6.4；locale zh/en、README、REPORT、DETAIL 同步。
 
 ## v0.6.3（2026-11-23）
 

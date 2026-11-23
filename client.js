@@ -94,6 +94,13 @@ window.__ModuleLoader__.load({
         scDiffFailed: 'diff 加载失败',
         scSelectHint: '勾选文件后可单笔提交',
         fSc: '开始页「资源控制」入口',
+        phrasesTitle: '常用语',
+        phrasesIntro: '悬浮在输入框上方的快捷短语，点击即插入到光标处（最多 5 条）。',
+        phrasesChipTitle: '点击插入到输入框光标处',
+        phrasesAdd: '添加常用语',
+        phrasesFull: '最多 5 条，先删除一条再添加',
+        phrasesPlaceholder: '输入常用语，如：使用 xxx skill，优化这份代码',
+        fPhrases: '输入框常用语悬浮条',
         scRootsTitle: '资源控制扫描根目录',
         scRootsIntro: '自动扫描所有工作区目录；可再添加其他根目录（向下最多 3 层）。',
         scAddRoot: '添加目录',
@@ -173,6 +180,13 @@ window.__ModuleLoader__.load({
         scDiffFailed: 'Failed to load diff',
         scSelectHint: 'Select files to commit them alone',
         fSc: '"Start" page Source Control entry',
+        phrasesTitle: 'Quick phrases',
+        phrasesIntro: 'Phrases floating above the composer; click one to insert it at the caret (max 5).',
+        phrasesChipTitle: 'Insert into the composer at the caret',
+        phrasesAdd: 'Add phrase',
+        phrasesFull: 'Maximum 5 phrases; remove one first',
+        phrasesPlaceholder: 'Type a phrase, e.g.: Use the xxx skill to optimize this code',
+        fPhrases: 'Composer quick-phrase bar',
         scRootsTitle: 'Source Control scan roots',
         scRootsIntro: 'Workspace directories are scanned automatically; add more roots (up to 3 levels deep).',
         scAddRoot: 'Add directory',
@@ -189,6 +203,7 @@ window.__ModuleLoader__.load({
       optimize: true,
       history: true,
       sc: true,
+      phrases: true,
     };
     const modelOverride = { provider: '', model: '' };
     // apply() installs a hook so flag changes can (un)mount the caption menu.
@@ -196,6 +211,22 @@ window.__ModuleLoader__.load({
     // Set by registerScUi: re-evaluates the sidebarRightTabs type registration
     // against featureFlags.sc when settings change.
     let scFlagsHook = null;
+
+    // Quick-phrase store: shared by the composer bar and the settings editor,
+    // so saving in ToolsPanel updates every mounted bar immediately.
+    const phraseStore = {
+      items: [],
+      listeners: new Set(),
+      set(items) {
+        phraseStore.items = Array.isArray(items) ? items.filter((t) => typeof t === 'string') : [];
+        for (const listener of phraseStore.listeners) listener();
+      },
+      subscribe(listener) {
+        phraseStore.listeners.add(listener);
+        return () => phraseStore.listeners.delete(listener);
+      },
+      snapshot() { return phraseStore.items; },
+    };
 
     const MENU_CSS = [
       '.dsh-tools-menu{position:absolute;top:calc(var(--dsh-windows-titlebar-height,40px) - 4px);z-index:1200;min-width:250px;padding:6px;border-radius:10px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 10px 30px rgba(0,0,0,.20);font:inherit;font-size:14px;color:var(--dsw-alias-label-primary);}',
@@ -248,6 +279,17 @@ window.__ModuleLoader__.load({
       '.dsh-tools-primary:disabled{opacity:.6;}',
       '.dsh-tools-note{font-size:12.5px;color:var(--dsw-alias-label-secondary);}',
       '.dsh-tools-note.is-error{color:var(--dsw-alias-state-error-primary);}',
+      // ---- quick phrases bar (conversation.input.overlay slot) ----
+      // The overlay anchor is a zero-height absolute strip pinned to the top of
+      // the composer card; translateY(-100%) floats the pill row just above
+      // the input box (user request 2026-11-23).
+      '.dsh-tools-phraseBar{position:absolute;left:0;right:0;top:0;transform:translateY(-100%);display:flex;gap:6px;padding:0 2px 7px;overflow-x:auto;scrollbar-width:none;z-index:6;}',
+      '.dsh-tools-phraseBar::-webkit-scrollbar{display:none;}',
+      '.dsh-tools-phrase{flex:none;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;height:24px;padding:0 11px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:var(--dsh-specific-input-major,var(--dsw-alias-bg-layer-1,#fff));box-shadow:var(--dsw-elevation-soft,none);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:22px;cursor:default;}',
+      '.dsh-tools-phrase:hover,.dsh-tools-phrase:focus-visible{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary,#3b82f6);outline:none;}',
+      // ---- quick phrases editor (settings panel section) ----
+      '.dsh-tools-phraseRow{display:flex;align-items:center;gap:8px;}',
+      '.dsh-tools-phraseInput{flex:1;min-width:0;padding:6px 9px;border-radius:7px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2,transparent);color:inherit;font:inherit;font-size:13px;}',
     ].join('\n');
 
     const GEN_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>';
@@ -364,6 +406,22 @@ window.__ModuleLoader__.load({
       if (inserted !== true) {
         editor.textContent = draft;
         editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: draft }));
+      }
+      return true;
+    }
+
+    // Quick phrases insert at the caret instead of replacing the draft: focus
+    // restores Lexical's last selection, and insertText without a prior
+    // selectAll appends right after the caret (user request 2026-11-23).
+    function insertPhraseAtCaret(startNode, text) {
+      const card = startNode?.closest?.('[data-composer-card]') ?? null;
+      const editor = card?.querySelector('[contenteditable="true"]') ?? null;
+      if (editor === null) return false;
+      editor.focus();
+      const inserted = document.execCommand('insertText', false, text);
+      if (inserted !== true) {
+        // Rare fallback: append at the end via an input event Lexical accepts.
+        editor.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
       }
       return true;
     }
@@ -694,6 +752,45 @@ window.__ModuleLoader__.load({
           return effectBody();
         };
 
+        // ---- quick phrases bar (slot conversation.input.overlay) ----
+        // Floating pill row above the composer; click inserts at the caret
+        // (user request 2026-11-23). Reads phraseStore so the settings panel
+        // can refresh every mounted bar without re-registering the slot.
+        const registerPhrasesBar = () => {
+          if (React === null || typeof ctx?.slots?.register !== 'function'
+            || typeof ctx.slots.inject !== 'function') {
+            return () => {};
+          }
+          ensureGenStyles();
+
+          const PhrasesBar = () => {
+            const items = typeof React.useSyncExternalStore === 'function'
+              ? React.useSyncExternalStore(phraseStore.subscribe, phraseStore.snapshot, phraseStore.snapshot)
+              : phraseStore.snapshot();
+            if (featureFlags.phrases !== true || items.length === 0) return null;
+            return React.createElement('div', { className: 'dsh-tools-phraseBar' },
+              items.map((text, index) => React.createElement('button', {
+                key: `${index}-${text}`,
+                type: 'button',
+                className: 'dsh-tools-phrase',
+                title: `${text}\n${t('phrasesChipTitle')}`,
+                onClick: (event) => { insertPhraseAtCaret(event.currentTarget, text); },
+              }, text)));
+          };
+
+          const effectBody = () => ctx.slots.inject('conversation.input.overlay', () => {
+            const unregister = ctx.slots.register(
+              { name: 'conversation.input.overlay', id: 'dsh-tools-phrases', order: 10 },
+              () => React.createElement(PhrasesBar),
+            );
+            return () => { try { unregister(); } catch { /* already gone */ } };
+          });
+          if (typeof ctx.effect === 'function') {
+            return ctx.effect(effectBody, 'dsh-tools: phrase bar');
+          }
+          return effectBody();
+        };
+
         // ---- settings panel (slot settings.section) ----
         const registerSettingsPanel = () => {
           if (React === null || typeof ctx?.slots?.register !== 'function'
@@ -708,6 +805,7 @@ window.__ModuleLoader__.load({
             ['optimize', 'fOptimize'],
             ['history', 'fHistory'],
             ['sc', 'fSc'],
+            ['phrases', 'fPhrases'],
           ];
 
           // Native directory picker (Client uiWorkspace service), when present.
@@ -737,6 +835,7 @@ window.__ModuleLoader__.load({
             const [saveNote, setSaveNote] = React.useState('');
             const [roots, setRoots] = React.useState(null);           // null = loading
             const [rootError, setRootError] = React.useState('');
+            const [phrasesDraft, setPhrasesDraft] = React.useState(null); // null = loading
 
             React.useEffect(() => {
               let alive = true;
@@ -762,8 +861,13 @@ window.__ModuleLoader__.load({
                   } else {
                     setRoots([]);
                   }
+                  if (result?.ok === true && Array.isArray(result.value?.settings?.phrases)) {
+                    setPhrasesDraft(result.value.settings.phrases.slice(0, 5));
+                  } else {
+                    setPhrasesDraft([]);
+                  }
                 } catch (error) {
-                  if (alive) { setRoots([]); setRootError(error?.message ?? String(error)); }
+                  if (alive) { setRoots([]); setPhrasesDraft([]); setRootError(error?.message ?? String(error)); }
                 }
               })();
               return () => { alive = false; };
@@ -799,6 +903,20 @@ window.__ModuleLoader__.load({
               setRoots((current) => (current ?? []).filter((r) => r !== path));
             };
 
+            const addPhrase = () => {
+              setPhrasesDraft((current) => {
+                const list = current ?? [];
+                if (list.length >= 5) return list;
+                return [...list, ''];
+              });
+            };
+            const editPhrase = (index, value) => {
+              setPhrasesDraft((current) => (current ?? []).map((p, i) => (i === index ? value.slice(0, 200) : p)));
+            };
+            const removePhrase = (index) => {
+              setPhrasesDraft((current) => (current ?? []).filter((_, i) => i !== index));
+            };
+
             const onSave = async () => {
               setSaveState('busy');
               setSaveNote(t('saving'));
@@ -806,6 +924,7 @@ window.__ModuleLoader__.load({
                 features: Object.fromEntries(TOGGLES.map(([key]) => [key, flags[key] === true])),
                 model: custom && provider !== '' && model !== '' ? { provider, model } : { provider: '', model: '' },
                 sc: { roots: roots ?? [] },
+                phrases: phrasesDraft ?? [],
               };
               try {
                 const result = await call('settings.set', payload);
@@ -814,6 +933,7 @@ window.__ModuleLoader__.load({
                   Object.assign(featureFlags, settings.features);
                   Object.assign(modelOverride, settings.model);
                   setFlags({ ...featureFlags });
+                  if (Array.isArray(settings.phrases)) phraseStore.set(settings.phrases);
                   runtime.applyFlags?.();
                   setSaveState('saved');
                   setSaveNote(t('saved'));
@@ -894,6 +1014,30 @@ window.__ModuleLoader__.load({
                 React.createElement('span', { dangerouslySetInnerHTML: { __html: SC_PLUS_GLYPH } }),
                 React.createElement('span', null, t('scAddRoot'))),
                 rootError !== '' ? React.createElement('p', { className: 'dsh-tools-note is-error' }, rootError) : null),
+              React.createElement('section', null,
+                React.createElement('h4', null, t('phrasesTitle')),
+                React.createElement('p', null, t('phrasesIntro')),
+                ...(phrasesDraft ?? []).map((phrase, index) => React.createElement('div', { className: 'dsh-tools-phraseRow', key: `phrase-${index}` },
+                  React.createElement('input', {
+                    className: 'dsh-tools-phraseInput',
+                    type: 'text',
+                    value: phrase,
+                    placeholder: t('phrasesPlaceholder'),
+                    onChange: (event) => editPhrase(index, event.target.value),
+                  }),
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scRootRemove',
+                    onClick: () => removePhrase(index),
+                  }, t('scRemoveRoot')))),
+                (phrasesDraft ?? []).length < 5 ? React.createElement('button', {
+                  type: 'button',
+                  className: 'dsh-tools-scBtn',
+                  onClick: addPhrase,
+                },
+                React.createElement('span', { dangerouslySetInnerHTML: { __html: SC_PLUS_GLYPH } }),
+                React.createElement('span', null, t('phrasesAdd')))
+                  : React.createElement('p', { className: 'dsh-tools-note' }, t('phrasesFull'))),
               React.createElement('div', { className: 'dsh-tools-panelFooter' },
                 React.createElement('button', {
                   type: 'button',
@@ -1015,7 +1159,7 @@ window.__ModuleLoader__.load({
             const [repos, setRepos] = React.useState(null);      // null = loading
             const [reposError, setReposError] = React.useState('');
             const [statusMap, setStatusMap] = React.useState({}); // repo.id -> {branch,files,truncated,error}
-            const [collapsed, setCollapsed] = React.useState({});
+            const [expanded, setExpanded] = React.useState({});     // repo.id -> true (default all collapsed)
             const [selected, setSelected] = React.useState({});   // repo.id -> Set<path>
             const [diffKey, setDiffKey] = React.useState(null);   // `${id}\u0001${path}`
             const [diffState, setDiffState] = React.useState({});
@@ -1183,7 +1327,9 @@ window.__ModuleLoader__.load({
 
             const repoGroups = (repos ?? []).map((repo) => {
               const st = statusMap[repo.id] ?? { branch: '', files: [], truncated: false, loading: true };
-              const isCollapsed = collapsed[repo.id] === true;
+              // Default collapsed: only repos the user explicitly expanded are
+              // open (user request 2026-11-23: "默认所有栏目关闭状态").
+              const isOpen = expanded[repo.id] === true;
               const sel = selectedSet(repo.id);
               const busyState = busy[repo.id] ?? { op: null, error: '', note: '' };
               const anyBusy = Boolean(busyState.op);
@@ -1192,9 +1338,9 @@ window.__ModuleLoader__.load({
                   React.createElement('button', {
                     type: 'button',
                     className: 'dsh-tools-scGroupHeadMain',
-                    onClick: () => setCollapsed((current) => ({ ...current, [repo.id]: !isCollapsed })),
+                    onClick: () => setExpanded((current) => ({ ...current, [repo.id]: !isOpen })),
                   },
-                  icon(SC_CHEVRON_GLYPH, `dsh-tools-scChev${isCollapsed ? '' : ' is-open'}`),
+                  icon(SC_CHEVRON_GLYPH, `dsh-tools-scChev${isOpen ? ' is-open' : ''}`),
                   React.createElement('span', { className: 'dsh-tools-scRepoName', title: repo.path }, repo.name),
                   st.branch !== '' ? React.createElement('span', { className: 'dsh-tools-scBranch' }, st.branch) : null,
                   React.createElement('span', { className: 'dsh-tools-scCount' }, String(st.files.length))),
@@ -1215,7 +1361,7 @@ window.__ModuleLoader__.load({
                     disabled: anyBusy,
                     onClick: () => { void doPush(repo); },
                   }, icon(SC_PUSH_GLYPH))),
-                !isCollapsed ? React.createElement('div', { className: 'dsh-tools-scFiles' },
+                isOpen ? React.createElement('div', { className: 'dsh-tools-scFiles' },
                   st.error !== undefined ? React.createElement('div', { className: 'dsh-tools-scNote is-error', style: { padding: '6px 12px' } }, st.error) : null,
                   st.error === undefined && st.loading ? React.createElement('div', { className: 'dsh-tools-scNote', style: { padding: '6px 12px' } }, '…') : null,
                   st.error === undefined && !st.loading && st.files.length === 0
@@ -1642,6 +1788,7 @@ window.__ModuleLoader__.load({
               const settings = result.value.settings;
               if (settings.features) Object.assign(featureFlags, settings.features);
               if (settings.model) Object.assign(modelOverride, settings.model);
+              if (Array.isArray(settings.phrases)) phraseStore.set(settings.phrases);
               runtime.applyFlags?.();
             }
           } catch { /* defaults stay in effect */ }
@@ -1652,6 +1799,13 @@ window.__ModuleLoader__.load({
           keep(registerComposerButtons());
         } catch (error) {
           console.warn('[dsh-tools] composer buttons unavailable:', error);
+        }
+
+        // Quick phrases floating above the composer.
+        try {
+          keep(registerPhrasesBar());
+        } catch (error) {
+          console.warn('[dsh-tools] phrases bar unavailable:', error);
         }
 
         // Settings section in the app settings page.

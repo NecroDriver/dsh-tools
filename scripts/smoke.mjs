@@ -209,6 +209,25 @@ try { settingsOnDisk = JSON.parse(readFileSync(join(process.env.DSH_TOOLS_HOME, 
 check('settings persisted to DSH_TOOLS_HOME/settings.json',
   settingsOnDisk?.features?.generate === false && settingsOnDisk?.model?.model === 'm-mini');
 
+// --- quick phrases: normalize, persist, roundtrip ---
+res = await post({ headers: baseHeaders, body: envelope('settings.set', {
+  phrases: ['  使用 skill 优化  ', '', '使用 skill 优化', 42, 'x'.repeat(300), 'keep me', 'sixth', 'seventh'],
+}) });
+message = JSON.parse(res.payload);
+check('settings.set normalizes phrases (trim/dedupe/cap200/cap5)',
+  envelopeGuard(res.payload) && message.result?.ok === true
+  && JSON.stringify(message.result?.value?.settings?.phrases) === JSON.stringify(['使用 skill 优化', 'x'.repeat(200), 'keep me', 'sixth', 'seventh']),
+  `phrases=${JSON.stringify(message.result?.value?.settings?.phrases)}`);
+let phrasesOnDisk = null;
+try { phrasesOnDisk = JSON.parse(readFileSync(join(process.env.DSH_TOOLS_HOME, 'settings.json'), 'utf8')).phrases; } catch { /* fail below */ }
+check('phrases persisted to disk',
+  Array.isArray(phrasesOnDisk) && phrasesOnDisk.length === 5 && phrasesOnDisk[0] === '使用 skill 优化');
+res = await post({ headers: baseHeaders, body: envelope('settings.get', {}) });
+message = JSON.parse(res.payload);
+check('settings.get returns phrases',
+  envelopeGuard(res.payload) && message.result?.ok === true
+  && message.result?.value?.settings?.phrases?.[0] === '使用 skill 优化');
+
 // --- optimize: honors the settings model override, rewrites the prompt ---
 fakeLlm.prepareCall = async (config) => {
   seenPrepareCalls.push(config);
@@ -319,6 +338,27 @@ try {
   cleanup();
 } catch { disposed = false; }
 check('cleanup runs clean', disposed && route === null && fetchRoute === null);
+
+// --- v0.6.4 hot-swap fix: apply() must register its teardown through
+// ctx.effect (Cordis ignores the returned disposer on plugin stop — the bug
+// that left /api/dsh-tools owned by a dead v0.6.0 fiber for three "hot"
+// updates). The returned value still works for bare stubs.
+{
+  let effectDisposer = null;
+  const effectCtx = {
+    ...ctx,
+    effect(factory) { effectDisposer = factory(); return () => { effectDisposer?.(); effectDisposer = null; }; },
+  };
+  const cleanup2 = apply(effectCtx);
+  check('apply registers teardown via ctx.effect when present',
+    typeof effectDisposer === 'function' && route?.path === '/api/dsh-tools' && typeof cleanup2 === 'function');
+  let effectRanClean = true;
+  try { effectDisposer(); } catch { effectRanClean = false; }
+  check('ctx.effect disposer tears routes down (hot-swap ownership fix)',
+    effectRanClean && route === null && fetchRoute === null);
+  // Idempotency: calling the returned cleanup after the effect disposer is a no-op.
+  try { cleanup2(); } catch { /* must not throw */ }
+}
 
 const failed = results.filter((entry) => !entry.ok || envelopeGuardFailed);
 if (failed.length === 0) {

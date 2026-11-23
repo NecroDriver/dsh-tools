@@ -35,6 +35,7 @@ function fakeElement(tag) {
 
 const windowListeners = {};
 const documentListeners = {};
+const execCommands = [];
 const sandbox = {
   console,
   setTimeout: (fn) => { queueMicrotask(fn); return 0; },
@@ -49,7 +50,7 @@ const sandbox = {
     addEventListener: (type, fn) => { (documentListeners[type] ??= []).push(fn); },
     removeEventListener: () => {},
     querySelector: () => null,
-    execCommand: () => true,
+    execCommand: (...args) => { execCommands.push(args); return true; },
   },
   MutationObserver: class { observe() {} disconnect() {} },
   Node: { TEXT_NODE: 3, ELEMENT_NODE: 1 },
@@ -163,9 +164,10 @@ const react = new MiniReact(schedule);
 const calls = [];
 const stubs = {
   'settings.get': () => ({ ok: true, value: { settings: {
-    features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true },
+    features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true, phrases: true },
     model: { provider: '', model: '' },
     sc: { roots: [] },
+    phrases: ['使用 skill 优化', '继续上面的方案'],
   } } }),
   'models.list': () => ({ ok: true, value: { providers: [], defaultSelection: null, override: null } }),
   'sc.repos': () => ({ ok: true, value: { roots: [], repos: [
@@ -270,6 +272,15 @@ const runEffects = async () => {
   check('sc.repos got session cwd hint', JSON.stringify(reposCall?.payload?.roots) === JSON.stringify(['D:/Workspace/personal']));
   check('repo group shown', findAll(tree, byClass('dsh-tools-scRepoName'))[0]?.children[0] === 'repo-a');
   check('branch chip', findAll(tree, byClass('dsh-tools-scBranch'))[0]?.children[0] === 'main');
+  // Default collapsed (user request 2026-11-23): no file rows until expanded.
+  check('repo group collapsed by default',
+    findAll(tree, (n) => byClass('dsh-tools-scChev')(n) && String(n.props.className).includes('is-open')).length === 0
+    && findAll(tree, byClass('dsh-tools-scFiles')).length === 0
+    && findAll(tree, byClass('dsh-tools-scFile')).length === 0);
+  findAll(tree, byClass('dsh-tools-scGroupHeadMain'))[0].props.onClick();
+  await settle();
+  await step();
+  check('clicking the group head expands it', findAll(tree, byClass('dsh-tools-scFiles')).length === 1);
   const files = findAll(tree, byClass('dsh-tools-scFile'));
   check('three file rows', files.length === 3);
   const badges = findAll(tree, byClass('dsh-tools-scBadge')).map((b) => b.children[0]).sort().join(',');
@@ -322,9 +333,45 @@ const runEffects = async () => {
   await settle(); await settle();
   check('push called', calls.some((c) => c.method === 'sc.push'));
 
-  // 7) dispose unregisters the type
+  // 7) quick phrases: overlay bar registered, chips render, click inserts at caret
+  const phraseReg = registrations.find((r) => r.slot === 'conversation.input.overlay' && r.id === 'dsh-tools-phrases');
+  check('phrase bar slot registered', phraseReg !== undefined);
+  const phraseTree = materialize(react, react.createElement(phraseReg.render, {}), 'ph', []);
+  const chips = findAll(phraseTree, byClass('dsh-tools-phrase'));
+  check('two phrase chips render', chips.length === 2 && chips[0].children[0] === '使用 skill 优化');
+  execCommands.length = 0;
+  const fakeEditor = { focus() {} };
+  const fakeCard = { querySelector: () => fakeEditor };
+  chips[0].props.onClick({ currentTarget: { closest: (sel) => (sel === '[data-composer-card]' ? fakeCard : null) } });
+  check('chip click inserts text at caret (no selectAll)',
+    execCommands.length === 1 && execCommands[0][0] === 'insertText' && execCommands[0][2] === '使用 skill 优化');
+
+  // 8) settings panel: phrases editor round-trips through settings.set
+  const settingsReg = registrations.find((r) => r.slot === 'settings.section' && r.id === 'dsh-tools');
+  check('settings panel registered', settingsReg !== undefined);
+  let panelTree = materialize(react, react.createElement(settingsReg.render, {}), 'sp', []);
+  await runEffectsPanel(panelTree);
+  panelTree = materialize(react, react.createElement(settingsReg.render, {}), 'sp', []);
+  const phraseInputs = findAll(panelTree, byClass('dsh-tools-phraseInput'));
+  check('phrase editor shows stored phrases', phraseInputs.length === 2 && phraseInputs[0].props.value === '使用 skill 优化');
+  const phraseAddBtn = findAll(panelTree, byClass('dsh-tools-scBtn')).find((b) => b.children.some((c) => c.children?.[0] === '添加常用语'));
+  check('phrase add button present', phraseAddBtn !== undefined);
+
+  // 9) dispose unregisters the type
   dispose();
   check('type disposed on unload', fakeTabs.disposed[0]?.gone === true);
 
   console.log(process.exitCode === 1 ? 'CLIENT RENDER TEST FAILED' : 'CLIENT RENDER TEST PASS');
 })().catch((error) => { console.error('FAIL exception:', error); process.exit(1); });
+
+// Run effects for a freshly materialized panel tree (same walker as runEffects
+// but scoped to this render's effects collection).
+async function runEffectsPanel() {
+  const fns = [];
+  for (const inst of react.instances.values()) {
+    for (const slot of inst.slots.values()) if (slot.kind === 'effect' && slot.value?.fn) fns.push(slot.value.fn);
+  }
+  for (const fn of fns) { try { fn(); } catch { /* effect error surfaces on settle */ } }
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}

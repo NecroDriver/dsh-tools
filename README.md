@@ -1,9 +1,9 @@
 # dsh-tools
 
-Desktop utilities for [DeepSeek Harness](https://dsh.ai) — six tools:
+Desktop utilities for [DeepSeek Harness](https://dsh.ai) — seven tools:
 **Reload plugins & Restart DSH**, **生成 / Generate**, **优化 / Optimize**,
-**↑/↓ input history**, **资源控制 / Source Control**, and a **Tools settings**
-panel.
+**↑/↓ input history**, **资源控制 / Source Control**, **常用语 / Quick phrases**,
+and a **Tools settings** panel.
 
 ## What it adds
 
@@ -69,6 +69,8 @@ the right sidebar pane:
   durable workspace registry, and custom roots from Tools settings. Each root
   is checked for being a repository itself first; otherwise the scan descends
   up to three levels, skipping `node_modules`/build directories.
+- Repository groups start **collapsed** (only the repo name, branch and change
+  count are shown); click a group header to expand its file list.
 - Changes are grouped per repository with branch name and count; each file row
   shows a status badge — **A**dded (green), **M**odified (blue), **D**eleted
   (red), **R**enamed (amber, with original path) — plus staged indication.
@@ -82,14 +84,22 @@ the right sidebar pane:
   files. The draft is editable before committing.
 - After committing, a **push** button appears on the group header.
 
-### 6. Tools settings (Settings → Tools)
+### 6. Quick phrases (composer)
+
+A bar of **常用语 / quick phrase** pills floats just above the composer. Clicking
+a pill inserts that phrase at the caret (focuses the editor first — it never
+replaces the whole draft). Up to five phrases are shown; the bar hides itself
+when none are configured. Phrases are edited in Tools settings (add, edit
+inline, remove) and persisted on the Host.
+
+### 7. Tools settings (Settings → Tools)
 
 A **工具设置** section in the app settings: one switch per feature (More menu,
-Generate, Optimize, Input history, Source Control), a custom model override
-(provider + model picked from the live `models.list` catalog — used by
-Generate/Optimize/commit-message instead of the session default), and the
-Source Control scan-roots editor (add via the native directory picker, remove
-individually).
+Generate, Optimize, Input history, Source Control, Quick phrases), a custom
+model override (provider + model picked from the live `models.list` catalog —
+used by Generate/Optimize/commit-message instead of the session default), the
+quick-phrases editor (up to five entries), and the Source Control scan-roots
+editor (add via the native directory picker, remove individually).
 
 ## How it works
 
@@ -104,10 +114,12 @@ individually).
   teardown: it stops the app and the Host (plus the Host's children), waits for
   all PIDs to exit, relaunches the executable, and confirms the relaunch. It
   logs to `%TEMP%\dsh-tools-restart.log`.
-- Generate/Optimize register into the `conversation.input.right` slot; Source
-  Control registers a right-sidebar tab type through the `sidebarRightTabs`
-  service (guide entry + tab body in `sidebar.right.pane.tab`); the settings
-  section into `settings.section`.
+- Generate/Optimize register into the `conversation.input.right` slot; the
+  quick-phrases bar into `conversation.input.overlay` (absolutely positioned,
+  translated above the composer card's top edge); Source Control registers a
+  right-sidebar tab type through the `sidebarRightTabs` service (guide entry +
+  tab body in `sidebar.right.pane.tab`); the settings section into
+  `settings.section`.
 - Source Control runs real `git` via `git -C <repo> …` (`status
   --porcelain=v1 -z`, `diff HEAD --`, `add -A -- <paths>` + `commit -m … --
   <paths>` for pathspec-scoped partial commits, `log --pretty=format:%s`,

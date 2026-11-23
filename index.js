@@ -35,7 +35,7 @@ export const inject = ['webServer', 'connection'];
 
 // Single source of truth for the running generation; dev.ping reports it so the
 // Client can confirm a hot reload actually swapped this module.
-const MODULE_VERSION = 'v0.6.3';
+const MODULE_VERSION = 'v0.6.4';
 
 const RPC_KEY = 'dsh-tools';
 const HELPER_PATH = join(tmpdir(), 'dsh-tools-restart.ps1');
@@ -352,10 +352,27 @@ const METHODS = {
 // DSH_TOOLS_HOME overrides the directory wholesale (used by tests).
 
 const DEFAULT_SETTINGS = Object.freeze({
-  features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true },
+  features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true, phrases: true },
   model: { provider: '', model: '' },   // '' = follow the app's default model
   sc: { roots: [] },                    // extra source-control scan roots (absolute dirs)
+  phrases: [],                          // quick phrases floating above the composer (max 5)
 });
+
+const PHRASES_MAX = 5;
+const PHRASE_MAX_LEN = 200;
+
+/** Strings only: trim, truncate, drop empties, dedupe, cap at PHRASES_MAX. */
+function normalizePhrases(list) {
+  if (!Array.isArray(list)) return [];
+  const cleaned = [];
+  for (const candidate of list) {
+    if (typeof candidate !== 'string') continue;
+    const text = candidate.trim().slice(0, PHRASE_MAX_LEN);
+    if (text === '' || cleaned.includes(text) || cleaned.length >= PHRASES_MAX) continue;
+    cleaned.push(text);
+  }
+  return cleaned;
+}
 
 function settingsDirectory() {
   // DSH_TOOLS_HOME replaces the state directory wholesale (tests); the real
@@ -374,6 +391,7 @@ function mergeSettings(stored) {
     features: { ...DEFAULT_SETTINGS.features },
     model: { ...DEFAULT_SETTINGS.model },
     sc: { roots: [] },
+    phrases: [],
   };
   if (isRecord(stored?.features)) {
     for (const key of Object.keys(merged.features)) {
@@ -388,6 +406,9 @@ function mergeSettings(stored) {
     merged.sc.roots = stored.sc.roots
       .filter((root) => typeof root === 'string' && root.trim() !== '')
       .slice(0, 32);
+  }
+  if (Array.isArray(stored?.phrases)) {
+    merged.phrases = normalizePhrases(stored.phrases);
   }
   return merged;
 }
@@ -461,6 +482,13 @@ async function handleSettingsSet(payload) {
     }
     if (cleaned.join('\n') !== next.sc.roots.join('\n')) {
       next.sc.roots = cleaned;
+      changed = true;
+    }
+  }
+  if (Array.isArray(payload.phrases)) {
+    const cleanedPhrases = normalizePhrases(payload.phrases);
+    if (cleanedPhrases.join('\u0001') !== next.phrases.join('\u0001')) {
+      next.phrases = cleanedPhrases;
       changed = true;
     }
   }
@@ -1140,6 +1168,7 @@ function installWebServerRoute(ctx, log) {
   let unregister = null;
   try {
     log('[dsh-tools] route mounted on webServer (exact)');
+    debugLog('webServer route mounted');
     unregister = webServer.register({
       kind: 'exact',
       path: `/api/${RPC_KEY}`,
@@ -1147,6 +1176,7 @@ function installWebServerRoute(ctx, log) {
     });
   } catch (error) {
     log(`[dsh-tools] webServer route mount failed: ${error?.message ?? error}`, 'warn');
+    debugLog(`webServer route mount FAILED: ${String(error?.message ?? error)}`);
   }
   return () => {
     try { unregister?.(); } catch { /* already gone */ }
@@ -1202,6 +1232,7 @@ function installConnectionFetch(ctx, log) {
   });
   } catch (error) {
     log(`[dsh-tools] connection.fetch mount failed: ${error?.message ?? error}`, 'warn');
+    debugLog(`connection.fetch mount FAILED: ${String(error?.message ?? error)}`);
   }
   return () => { try { unregister?.(); } catch { /* already gone */ } };
 }
@@ -1225,14 +1256,28 @@ export function apply(ctx) {
   const stopSelector = captureService(ctx, 'agentDefaultModel', (service) => { modelSelector = service; }, () => { modelSelector = null; }, log);
   const stopRegistry = captureService(ctx, 'workspaceRegistry', (service) => { workspaceRegistryService = service; }, () => { workspaceRegistryService = null; }, log);
   const stopHmr = captureService(ctx, 'hmr', (service) => { hmrService = service; }, () => { hmrService = null; }, log);
-  return () => {
-    stopHmr();
-    stopRegistry();
-    stopSelector();
-    stopLlm();
-    stopFetch();
-    stopRoute();
+  // Teardown: Cordis only honors ctx.effect() disposers on plugin stop — a
+  // plain return value is IGNORED, which left routes owned by dead fibers
+  // serving stale code after HMR swaps (found 2026-11-23: /api/dsh-tools was
+  // still answered by the v0.6.0 fiber across three "hot" updates). Register
+  // the real hook when present; keep the return value for bare test stubs.
+  let tornDown = false;
+  const stops = [stopHmr, stopRegistry, stopSelector, stopLlm, stopFetch, stopRoute];
+  const teardown = () => {
+    if (tornDown) return;
+    tornDown = true;
+    for (const stop of stops) {
+      try { stop(); } catch { /* already gone */ }
+    }
   };
+  if (typeof ctx?.effect === 'function') {
+    try {
+      ctx.effect(() => teardown);
+    } catch (error) {
+      log(`[dsh-tools] ctx.effect registration failed: ${error?.message ?? error}`, 'warn');
+    }
+  }
+  return teardown;
 }
 
 /** Attach a runtime child fiber for one optional service; returns a stop(). */
