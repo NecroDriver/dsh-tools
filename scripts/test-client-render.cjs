@@ -23,7 +23,19 @@ function fakeElement(tag) {
     listeners: {},
     className: '',
     _text: '',
-    append(...nodes) { this.children.push(...nodes); },
+    isConnected: true,
+    offsetHeight: 0,
+    offsetWidth: 0,
+    contains(node) {
+      if (node === null || node === undefined || typeof node !== 'object') return false;
+      if (node === this) return true;
+      return this.children.some((child) => typeof child.contains === 'function' && child.contains(node));
+    },
+    getBoundingClientRect() { return { top: 280, left: 8, bottom: 308, right: 56, width: 48, height: 28 }; },
+    append(...nodes) {
+      for (const node of nodes) if (node && typeof node === 'object') node.parentElement = this;
+      this.children.push(...nodes);
+    },
     appendChild(node) { this.children.push(node); node.parentElement = this; },
     insertBefore(node, ref) {
       const i = ref ? this.children.indexOf(ref) : -1;
@@ -87,6 +99,8 @@ const sandbox = {
   getSelection: () => null,
 };
 sandbox.window = {
+  innerWidth: 320,
+  innerHeight: 800,
   addEventListener: (type, fn) => { (windowListeners[type] ??= []).push(fn); },
   removeEventListener: () => {},
 };
@@ -169,6 +183,12 @@ function materialize(react, element, keyPath, effects) {
     return materialize(react, out, keyPath, effects);
   }
   const children = element.children.map((child, i) => materialize(react, child, `${keyPath}/${i}`, effects));
+  // Function refs on host nodes: hand the component a live stand-in node so
+  // imperative escapes (popover anchors) can be driven from the test.
+  if (typeof element.props.ref === 'function') {
+    const standIn = fakeElement(String(element.type));
+    element.props.ref(standIn);
+  }
   return { type: element.type, props: element.props, children };
 }
 
@@ -217,6 +237,12 @@ const stubs = {
   'sc.commitMessage': () => ({ ok: true, value: { draft: 'feat: add things', lang: 'zh' } }),
   'sc.commit': () => ({ ok: true, value: { commit: 'abc1234', count: 1 } }),
   'sc.push': () => ({ ok: true, value: { output: 'pushed' } }),
+  'usage.today': () => ({ ok: true, value: {
+    timeZone: 'Asia/Shanghai',
+    today: { day: '2026-11-23', isToday: true, inputTokens: 180_000, outputTokens: 42_000, cacheReadTokens: 980_000, cacheWriteTokens: 32_500, requests: 17, total: 1_234_500 },
+    days: Array.from({ length: 14 }, (_, i) => ({ day: `2026-11-${String(10 + i)}`, isToday: i === 13, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, requests: 0, total: i === 13 ? 1_234_500 : i === 12 ? 40_000 : 0 })),
+    activeSessions: 4,
+  } }),
 };
 const call = async (method, payload) => {
   calls.push({ method, payload });
@@ -286,7 +312,10 @@ check('guide entry shape', def?.guide?.[0]?.id === 'sc' && def.guide[0].order ==
 
 const paneTab = registrations.find((r) => r.slot === 'sidebar.right.pane.tab' && r.key === 'dsh-tools-sc');
 check('pane tab body registered', paneTab !== undefined);
-check('no sidebar footer entry', registrations.find((r) => r.slot === 'sidebar.footer.action') === undefined);
+const usageReg = registrations.find((r) => r.slot === 'sidebar.footer.action');
+check('usage chip registered in sidebar footer', usageReg?.id === 'dsh-tools-usage'
+  && usageReg.order === 5 && typeof usageReg.render === 'function'
+  && typeof usageReg.label === 'function' && usageReg.label() === '今日 Token 用量');
 check('no shell overlay drawer', registrations.find((r) => r.slot === 'shell.overlay') === undefined);
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -383,15 +412,20 @@ const runEffects = async () => {
   const hostSpan = findAll(phraseTree, byClass('dsh-tools-phraseHost'))[0];
   check('bootstrap host renders hidden', hostSpan !== undefined
     && hostSpan.props.style?.display === 'none');
-  // Simulate the real DOM chain: host span -> overlay anchor -> composer card,
-  // with the draft editor nested one level inside the card.
+  // Simulate the real DOM chain: host span -> slot-entry wrapper -> overlay
+  // anchor -> composer card, with the draft editor nested one level inside
+  // the card. The wrapper level is what broke v0.6.7's fixed "two hops up"
+  // card lookup; attachBootstrap must find the card via closest().
   const fakeEd = fakeElement('div');
   const fakeEdHost = fakeElement('div'); fakeEdHost.appendChild(fakeEd);
   const fakeCardEl = fakeElement('div');
   fakeCardEl.querySelector = (sel) => (String(sel).includes('contenteditable') ? fakeEd : null);
   const fakeAnchorEl = fakeElement('div');
+  const fakeEntryWrap = fakeElement('div');
   const fakeSpanEl = fakeElement('span');
-  fakeAnchorEl.appendChild(fakeSpanEl);
+  fakeSpanEl.closest = (sel) => (sel === '[data-composer-card]' ? fakeCardEl : null);
+  fakeEntryWrap.appendChild(fakeSpanEl);
+  fakeAnchorEl.appendChild(fakeEntryWrap);
   fakeCardEl.appendChild(fakeAnchorEl);
   fakeCardEl.appendChild(fakeEdHost);
   hostSpan.props.ref(fakeSpanEl);
@@ -460,6 +494,62 @@ const runEffects = async () => {
   check('re-added phrase shows in the in-card row',
     phraseRow.style.display === '' && phraseRow.children.length === 1
     && phraseRow.children[0].textContent === '再来一条');
+
+  // 7c) usage chip: wide row with formatted total, rail icon variant, and a
+  //     body-level popover with buckets/chart/meta opened on click
+  const usageTree = () => materialize(react, react.createElement(usageReg.render, { wide: true }), 'u', []);
+  let chipTree = usageTree();
+  await runEffectsPanel();           // mount effect -> usageStore.ensure()
+  chipTree = usageTree();            // re-render with SWR data
+  const chipBtn = findAll(chipTree, byClass('dsh-tools-usageChip'))[0];
+  check('wide chip renders button with aria hooks', chipBtn !== undefined
+    && chipBtn.props['aria-haspopup'] === 'dialog' && chipBtn.props['aria-expanded'] === 'false');
+  const labelSpan = findAll(chipTree, byClass('dsh-tools-usageChipLabel'))[0];
+  const valueSpan = findAll(chipTree, byClass('dsh-tools-usageChipValue'))[0];
+  check('wide chip shows 今日 + compact total', labelSpan?.children?.[0] === '今日'
+    && valueSpan?.children?.[0] === '1.23M');
+  const usageCalls0 = calls.filter((c) => c.method === 'usage.today').length;
+  check('mount fetched usage once', usageCalls0 === 1, `calls=${usageCalls0}`);
+  const railTree = materialize(react, react.createElement(usageReg.render, { wide: false }), 'ur', []);
+  const railBtn = findAll(railTree, byClass('dsh-tools-usageChip'))[0];
+  check('rail variant is icon-only', String(railBtn?.props?.className).includes('is-rail')
+    && findAll(railTree, byClass('dsh-tools-usageChipValue')).length === 0);
+  // The button uses an object ref; point it at a live stand-in node so the
+  // imperative popover anchor resolves during the click.
+  const chipNode = fakeElement('button');
+  chipBtn.props.ref.current = chipNode;
+  chipBtn.props.onClick({ stopPropagation() {} });
+  await settle(); await settle();
+  const domFindAll = (node, pred, found = []) => {
+    if (pred(node)) found.push(node);
+    for (const child of node.children ?? []) domFindAll(child, pred, found);
+    return found;
+  };
+  const byDomClass = (cls) => (node) => String(node?.className ?? '').split(/\s+/).includes(cls);
+  const pop = sandbox.document.body.children.find((c) => c.className === 'dsh-tools-usagePop');
+  check('click opens popover into body', pop !== undefined && pop.parentElement === sandbox.document.body);
+  const popRows = pop ? pop.children : [];
+  check('popover shows compact total', popRows.some((row) => (row._text ?? '').includes('1.23M')
+    || (row.children ?? []).some((c) => (c._text ?? '').includes('1.23M'))));
+  const bucketRows = domFindAll(pop, byDomClass('dsh-tools-usageBucketRow'));
+  check('popover bucket rows', bucketRows.length === 4, `rows=${bucketRows.length}`);
+  const chart = popRows.find(byDomClass('dsh-tools-usageChart'));
+  check('popover chart has 7 columns', chart !== undefined && chart.children.length === 7
+    && String(chart.children[6].className).includes('is-today'));
+  check('popover meta mentions requests', popRows.some((row) => String(row._text ?? '').includes('请求')
+    || (row.children ?? []).some((c) => (c._text ?? '').includes('请求'))));
+  const forced = calls.filter((c) => c.method === 'usage.today' && c.payload?.force === true);
+  check('opening forces a refresh', forced.length >= 1, `forced=${forced.length}`);
+  chipTree = usageTree();
+  check('aria-expanded reflects open state',
+    findAll(chipTree, byClass('dsh-tools-usageChip'))[0]?.props['aria-expanded'] === 'true');
+  (windowListeners.keydown ?? []).forEach((fn) => fn({ key: 'Escape', stopPropagation() {} }));
+  check('Escape closes the popover',
+    sandbox.document.body.children.find((c) => c.className === 'dsh-tools-usagePop') === undefined);
+  chipTree = usageTree();
+  check('aria-expanded resets after close',
+    findAll(chipTree, byClass('dsh-tools-usageChip'))[0]?.props['aria-expanded'] === 'false');
+
   // 9) dispose unregisters the type
   dispose();
   check('type disposed on unload', fakeTabs.disposed[0]?.gone === true);

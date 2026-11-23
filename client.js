@@ -105,6 +105,22 @@ window.__ModuleLoader__.load({
         scRootsIntro: '自动扫描所有工作区目录；可再添加其他根目录（向下最多 3 层）。',
         scAddRoot: '添加目录',
         scRemoveRoot: '移除',
+        fUsage: '侧栏「今日用量」组件',
+        usageTodayLabel: '今日',
+        usageTitle: '今日 Token 用量',
+        usageInput: '输入',
+        usageOutput: '输出',
+        usageCacheRead: '缓存读',
+        usageCacheWrite: '缓存写',
+        usageRequests: '请求',
+        usageSessions: '活跃会话',
+        usageWeek: '近 7 天',
+        usageUpdated: '更新于',
+        usageRefresh: '刷新',
+        usageEmpty: '今日暂无用量',
+        usageError: '用量读取失败',
+        usageRetry: '重试',
+        usagePartial: '部分会话读取失败，统计可能不完整',
       },
       en: {
         more: 'More',
@@ -191,6 +207,22 @@ window.__ModuleLoader__.load({
         scRootsIntro: 'Workspace directories are scanned automatically; add more roots (up to 3 levels deep).',
         scAddRoot: 'Add directory',
         scRemoveRoot: 'Remove',
+        fUsage: 'Sidebar "Today\'s usage" widget',
+        usageTodayLabel: 'Today',
+        usageTitle: 'Today\'s token usage',
+        usageInput: 'Input',
+        usageOutput: 'Output',
+        usageCacheRead: 'Cache read',
+        usageCacheWrite: 'Cache write',
+        usageRequests: 'Requests',
+        usageSessions: 'Active sessions',
+        usageWeek: 'Last 7 days',
+        usageUpdated: 'Updated',
+        usageRefresh: 'Refresh',
+        usageEmpty: 'No usage recorded today',
+        usageError: 'Failed to load usage',
+        usageRetry: 'Retry',
+        usagePartial: 'Some sessions failed to load; totals may be incomplete',
       },
     };
 
@@ -204,6 +236,7 @@ window.__ModuleLoader__.load({
       history: true,
       sc: true,
       phrases: true,
+      usage: true,
     };
     const modelOverride = { provider: '', model: '' };
     // apply() installs a hook so flag changes can (un)mount the caption menu.
@@ -226,6 +259,82 @@ window.__ModuleLoader__.load({
         return () => phraseStore.listeners.delete(listener);
       },
       snapshot() { return phraseStore.items; },
+    };
+
+    // ---- today's token usage (sidebar footer widget) ----
+    //
+    // SWR store fed by the Host RPC 'usage.today' (per-day token aggregate
+    // over every logical session; see index.js for the fold semantics).
+    // `usageCall` is bound by registerUsageWidget so the store also works
+    // before/after slot teardown. State object is REPLACED (not mutated) on
+    // every change so useSyncExternalStore sees a new snapshot reference.
+    let usageCall = null;
+    const usageStore = {
+      state: { status: 'idle', data: null, error: '', updatedAt: 0 },
+      listeners: new Set(),
+      _inflight: null,
+      _slowTimer: 0,
+      subscribe(listener) {
+        usageStore.listeners.add(listener);
+        return () => usageStore.listeners.delete(listener);
+      },
+      snapshot() { return usageStore.state; },
+      _set(patch) {
+        usageStore.state = { ...usageStore.state, ...patch };
+        for (const listener of usageStore.listeners) listener();
+      },
+      /** Refresh if no data yet or older than maxAge; concurrent calls coalesce. */
+      ensure(maxAge = 300_000) {
+        const { status, data, updatedAt } = usageStore.state;
+        if (status === 'ready' && data !== null && Date.now() - updatedAt < maxAge) return Promise.resolve();
+        return usageStore.refresh(false);
+      },
+      refresh(force) {
+        if (usageStore._inflight !== null) return usageStore._inflight;
+        if (usageCall === null) {
+          usageStore._set({ status: 'error', error: 'rpc unavailable' });
+          return Promise.resolve();
+        }
+        // Loading state only matters when there is nothing to show yet —
+        // otherwise keep the stale numbers on screen (no flashing).
+        if (usageStore.state.data === null && usageStore._slowTimer === 0) {
+          usageStore._slowTimer = setTimeout(() => {
+            usageStore._slowTimer = 0;
+            if (usageStore.state.data === null) usageStore._set({ status: 'loading' });
+          }, 250);
+        }
+        const startedAt = Date.now();
+        usageStore._inflight = usageCall('usage.today', { force: force === true }).then((result) => {
+          if (result?.ok === true && result.value !== null && typeof result.value === 'object') {
+            usageStore._set({ status: 'ready', data: result.value, error: '', updatedAt: Date.now() });
+          } else {
+            const err = result?.error;
+            const message = typeof err?.message === 'string' && err.message !== '' ? err.message : 'usage.today failed';
+            usageStore._set({ status: 'error', error: message, updatedAt: startedAt });
+          }
+          return result;
+        }).catch((error) => {
+          usageStore._set({ status: 'error', error: error?.message ?? String(error), updatedAt: startedAt });
+          return null;
+        }).finally(() => {
+          usageStore._inflight = null;
+          if (usageStore._slowTimer !== 0) {
+            clearTimeout(usageStore._slowTimer);
+            usageStore._slowTimer = 0;
+          }
+        });
+        return usageStore._inflight;
+      },
+    };
+
+    // 1234 → '1234'; 12_500 → '12.5K'; 1_250_000 → '1.25M' ('.0' trimmed).
+    const formatTokens = (n) => {
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return '—';
+      if (n < 1000) return String(Math.round(n));
+      const unit = n < 1e6 ? [1e3, 'K'] : n < 1e9 ? [1e6, 'M'] : [1e9, 'B'];
+      const value = n / unit[0];
+      const text = value >= 100 ? value.toFixed(0) : value.toFixed(2).replace(/\.?0+$/, '');
+      return `${text}${unit[1]}`;
     };
 
     const MENU_CSS = [
@@ -378,6 +487,315 @@ window.__ModuleLoader__.load({
       style.textContent = SC_CSS;
       document.head.append(style);
     }
+
+    // Lightning-in-circle: energy/usage meter for the sidebar footer widget.
+    const USAGE_GLYPH = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/></svg>';
+
+    const USAGE_REFRESH_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
+
+    // Sidebar footer chip (sidebar.footer.action renders its occupants in a
+    // horizontal flex row; wide = expanded sidebar, !wide = 56px rail) plus
+    // the detail popover it opens (body-level fixed panel).
+    const USAGE_CSS = [
+      '.dsh-tools-usageChip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;margin:0 0 4px 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:default;white-space:nowrap;}',
+      '.dsh-tools-usageChip:hover,.dsh-tools-usageChip:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary);outline:none;}',
+      '.dsh-tools-usageChip:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-brand-primary,#3b82f6);}',
+      '.dsh-tools-usageChipIcon{display:inline-flex;flex:none;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}',
+      '.dsh-tools-usageChipIcon.is-error{color:var(--dsw-alias-state-warn-primary,#d29922);}',
+      '.dsh-tools-usageChipLabel{flex:none;color:inherit;}',
+      '.dsh-tools-usageChipValue{font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:11.5px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;}',
+      '.dsh-tools-usageChipValue.is-empty{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}',
+      '.dsh-tools-usageChipValue.is-error{color:var(--dsw-alias-state-warn-primary,#d29922);}',
+      // rail (collapsed sidebar): icon-only square, centered by the shell
+      '.dsh-tools-usageChip.is-rail{width:32px;height:32px;justify-content:center;padding:0;margin:0 0 4px;}',
+      // ---- popover (fixed, body-level) ----
+      '.dsh-tools-usagePop{position:fixed;z-index:2000;width:272px;padding:14px 14px 10px;border-radius:12px;background:var(--dsw-alias-bg-overlay,#222);border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.22));box-shadow:0 12px 32px rgba(0,0,0,.28);font:inherit;font-size:12.5px;color:var(--dsw-alias-label-primary);animation:dsh-tools-usageIn 140ms cubic-bezier(.2,.8,.2,1);}',
+      '@keyframes dsh-tools-usageIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}',
+      '@media (prefers-reduced-motion: reduce){.dsh-tools-usagePop{animation:none;}}',
+      '.dsh-tools-usagePop *{box-sizing:border-box;}',
+      '.dsh-tools-usageHead{display:flex;align-items:baseline;gap:8px;}',
+      '.dsh-tools-usageHeadTitle{flex:1;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-usageTotal{font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;}',
+      '.dsh-tools-usageBuckets{display:flex;flex-direction:column;gap:7px;margin:12px 0 2px;}',
+      '.dsh-tools-usageBucketRow{display:flex;align-items:center;gap:8px;height:16px;}',
+      '.dsh-tools-usageBucketName{width:52px;flex:none;color:var(--dsw-alias-label-secondary);font-size:11.5px;}',
+      '.dsh-tools-usageBucketValue{width:64px;flex:none;text-align:right;font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:11.5px;font-variant-numeric:tabular-nums;}',
+      '.dsh-tools-usageBar{flex:1;height:4px;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.18));overflow:hidden;}',
+      '.dsh-tools-usageBarFill{height:100%;border-radius:2px;background:var(--dsw-alias-brand-primary,#3b82f6);transition:width 300ms ease-out;}',
+      '.dsh-tools-usageMeta{margin:10px 0 0;color:var(--dsw-alias-label-secondary);font-size:11.5px;}',
+      '.dsh-tools-usageChartTitle{margin:13px 0 6px;color:var(--dsw-alias-label-secondary);font-size:11.5px;}',
+      '.dsh-tools-usageChart{display:flex;align-items:flex-end;gap:5px;height:34px;}',
+      '.dsh-tools-usageCol{flex:1;display:flex;align-items:flex-end;height:100%;min-width:0;}',
+      '.dsh-tools-usageColBar{width:100%;min-height:2px;border-radius:2px 2px 1px 1px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.28));transition:height 300ms ease-out;}',
+      '.dsh-tools-usageCol.is-today .dsh-tools-usageColBar{background:var(--dsw-alias-brand-primary,#3b82f6);}',
+      '.dsh-tools-usageFoot{display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18));color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-size:11px;}',
+      '.dsh-tools-usageStamp{flex:1;min-width:0;}',
+      '.dsh-tools-usageRefresh{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:default;flex:none;}',
+      '.dsh-tools-usageRefresh:hover:not(:disabled),.dsh-tools-usageRefresh:focus-visible:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary);outline:none;}',
+      '.dsh-tools-usageRefresh:disabled{opacity:.5;}',
+      '.dsh-tools-usageRefresh.is-busy svg{animation:dsh-tools-rot 1s linear infinite;}',
+      '.dsh-tools-usageWarn{margin-top:6px;color:var(--dsw-alias-state-warn-primary,#d29922);font-size:11px;}',
+      '.dsh-tools-usageState{display:flex;flex-direction:column;gap:8px;padding:10px 2px 6px;color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-usageStateText{font-size:12px;}',
+      '.dsh-tools-usageRetry{align-self:flex-start;height:24px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:inherit;font-size:11.5px;cursor:default;}',
+      '.dsh-tools-usageRetry:hover{border-color:var(--dsw-alias-label-secondary);color:var(--dsw-alias-label-primary);}',
+      '.dsh-tools-usageSkel{display:flex;flex-direction:column;gap:8px;padding:4px 0;}',
+      '.dsh-tools-usageSkelBar{height:10px;border-radius:5px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.18));animation:dsh-tools-usagePulse 1.2s ease-in-out infinite;}',
+      '.dsh-tools-usageSkelBar:nth-child(2){width:78%;animation-delay:.12s;}',
+      '.dsh-tools-usageSkelBar:nth-child(3){width:56%;animation-delay:.24s;}',
+      '@keyframes dsh-tools-usagePulse{0%,100%{opacity:.45;}50%{opacity:.9;}}',
+      '@media (prefers-reduced-motion: reduce){.dsh-tools-usageBarFill,.dsh-tools-usageColBar{transition:none;}.dsh-tools-usageSkelBar{animation:none;}}',
+    ].join('\n');
+
+    function ensureUsageStyles() {
+      if (document.getElementById('dsh-tools-usage-styles') !== null) return;
+      const style = document.createElement('style');
+      style.id = 'dsh-tools-usage-styles';
+      style.textContent = USAGE_CSS;
+      document.head.append(style);
+    }
+
+    // ---- usage popover (plain DOM, body-level, anchored to the chip) ----
+    //
+    // Managed outside React on purpose: the chip lives in the sidebar footer
+    // slot, but the popover must escape any overflow container and survive
+    // slot re-mounts. One popover at a time; re-renders ride usageStore.
+    const usagePopover = {
+      el: null,
+      anchor: null,
+      opts: null,
+      unsubscribe: null,
+      onPointerDown: null,
+      onKeyDown: null,
+      onLayout: null,
+
+      open(anchor, opts) {
+        if (usagePopover.el !== null) {
+          if (usagePopover.anchor === anchor) return;
+          usagePopover.close();
+        }
+        ensureUsageStyles();
+        usagePopover.anchor = anchor;
+        usagePopover.opts = opts ?? {};
+        const pop = document.createElement('div');
+        pop.className = 'dsh-tools-usagePop';
+        pop.setAttribute('role', 'dialog');
+        pop.setAttribute('aria-label', usagePopover.opts.t?.('usageTitle') ?? 'usage');
+        usagePopover.el = pop;
+        usagePopover.render();
+        document.body.append(pop);
+        usagePopover.position();
+        usagePopover.unsubscribe = usageStore.subscribe(() => usagePopover.render());
+        usagePopover.onPointerDown = (event) => {
+          const target = event.target;
+          if (pop.contains(target) || (usagePopover.anchor !== null && usagePopover.anchor.contains(target))) return;
+          usagePopover.close();
+        };
+        usagePopover.onKeyDown = (event) => {
+          if (event.key === 'Escape') {
+            event.stopPropagation();
+            usagePopover.close();
+            usagePopover.anchor?.focus?.();
+          }
+        };
+        usagePopover.onLayout = () => usagePopover.position();
+        window.addEventListener('pointerdown', usagePopover.onPointerDown, true);
+        window.addEventListener('keydown', usagePopover.onKeyDown, true);
+        window.addEventListener('resize', usagePopover.onLayout, true);
+        window.addEventListener('scroll', usagePopover.onLayout, true);
+      },
+
+      position() {
+        const { el, anchor } = usagePopover;
+        if (el === null || anchor === null || anchor.isConnected !== true) return;
+        const rect = anchor.getBoundingClientRect();
+        const margin = 8;
+        const width = 272;
+        let left = Math.round(rect.left);
+        left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+        let top = Math.round(rect.top) - el.offsetHeight - 8;
+        if (top < margin) top = Math.min(rect.bottom + 8, window.innerHeight - el.offsetHeight - margin);
+        el.style.left = `${Math.max(margin, left)}px`;
+        el.style.top = `${Math.max(margin, top)}px`;
+      },
+
+      render() {
+        const { el, opts } = usagePopover;
+        if (el === null) return;
+        const t = typeof opts.t === 'function' ? opts.t : (key) => key;
+        const { status, data, error, updatedAt } = usageStore.state;
+        el.textContent = '';
+
+        if (data === null && (status === 'idle' || status === 'loading')) {
+          const box = document.createElement('div');
+          box.className = 'dsh-tools-usageState';
+          const skel = document.createElement('div');
+          skel.className = 'dsh-tools-usageSkel';
+          skel.append(
+            Object.assign(document.createElement('div'), { className: 'dsh-tools-usageSkelBar' }),
+            Object.assign(document.createElement('div'), { className: 'dsh-tools-usageSkelBar' }),
+            Object.assign(document.createElement('div'), { className: 'dsh-tools-usageSkelBar' }),
+          );
+          box.append(skel);
+          el.append(box);
+          usagePopover.position();
+          return;
+        }
+        if (status === 'error' && data === null) {
+          const box = document.createElement('div');
+          box.className = 'dsh-tools-usageState';
+          const text = document.createElement('div');
+          text.className = 'dsh-tools-usageStateText';
+          text.textContent = `${t('usageError')} · ${error}`;
+          const retry = document.createElement('button');
+          retry.type = 'button';
+          retry.className = 'dsh-tools-usageRetry';
+          retry.textContent = t('usageRetry');
+          retry.addEventListener('click', () => { usageStore.refresh(true); });
+          box.append(text, retry);
+          el.append(box);
+          usagePopover.position();
+          return;
+        }
+
+        const today = data?.today;
+        const buckets = [
+          ['usageInput', today?.inputTokens ?? 0, 0.95],
+          ['usageOutput', today?.outputTokens ?? 0, 0.72],
+          ['usageCacheRead', today?.cacheReadTokens ?? 0, 0.5],
+          ['usageCacheWrite', today?.cacheWriteTokens ?? 0, 0.32],
+        ];
+        const maxBucket = Math.max(1, ...buckets.map(([, value]) => value));
+        const isEmpty = (today?.total ?? 0) === 0 && (today?.requests ?? 0) === 0;
+
+        const head = document.createElement('div');
+        head.className = 'dsh-tools-usageHead';
+        const title = document.createElement('div');
+        title.className = 'dsh-tools-usageHeadTitle';
+        title.textContent = t('usageTitle');
+        const total = document.createElement('div');
+        total.className = 'dsh-tools-usageTotal';
+        total.title = String(today?.total ?? 0);
+        total.textContent = formatTokens(today?.total ?? 0);
+        head.append(title, total);
+        el.append(head);
+
+        if (isEmpty) {
+          const empty = document.createElement('div');
+          empty.className = 'dsh-tools-usageStateText';
+          empty.style.marginTop = '10px';
+          empty.textContent = t('usageEmpty');
+          el.append(empty);
+        } else {
+          const rows = document.createElement('div');
+          rows.className = 'dsh-tools-usageBuckets';
+          for (const [key, value, opacity] of buckets) {
+            const row = document.createElement('div');
+            row.className = 'dsh-tools-usageBucketRow';
+            const name = document.createElement('div');
+            name.className = 'dsh-tools-usageBucketName';
+            name.textContent = t(key);
+            const valueEl = document.createElement('div');
+            valueEl.className = 'dsh-tools-usageBucketValue';
+            valueEl.textContent = formatTokens(value);
+            const bar = document.createElement('div');
+            bar.className = 'dsh-tools-usageBar';
+            const fill = document.createElement('div');
+            fill.className = 'dsh-tools-usageBarFill';
+            fill.style.width = `${Math.round((value / maxBucket) * 100)}%`;
+            fill.style.opacity = String(opacity);
+            bar.append(fill);
+            row.append(name, valueEl, bar);
+            rows.append(row);
+          }
+          el.append(rows);
+        }
+
+        const meta = document.createElement('div');
+        meta.className = 'dsh-tools-usageMeta';
+        meta.textContent = `${t('usageRequests')} ${today?.requests ?? 0} · ${t('usageSessions')} ${data?.activeSessions ?? 0}`;
+        el.append(meta);
+
+        // last-7-days mini chart (payload carries 14; show the recent week)
+        const days = Array.isArray(data?.days) ? data.days.slice(-7) : [];
+        if (days.length > 0) {
+          const chartTitle = document.createElement('div');
+          chartTitle.className = 'dsh-tools-usageChartTitle';
+          chartTitle.textContent = t('usageWeek');
+          const chart = document.createElement('div');
+          chart.className = 'dsh-tools-usageChart';
+          const maxDay = Math.max(1, ...days.map((day) => day.total ?? 0));
+          for (const day of days) {
+            const col = document.createElement('div');
+            col.className = `dsh-tools-usageCol${day.isToday ? ' is-today' : ''}`;
+            const bar = document.createElement('div');
+            bar.className = 'dsh-tools-usageColBar';
+            const height = Math.max(2, Math.round(((day.total ?? 0) / maxDay) * 34));
+            bar.style.height = `${height}px`;
+            col.title = `${day.day} · ${formatTokens(day.total ?? 0)}`;
+            col.append(bar);
+            chart.append(col);
+          }
+          el.append(chartTitle, chart);
+        }
+
+        const foot = document.createElement('div');
+        foot.className = 'dsh-tools-usageFoot';
+        const stamp = document.createElement('div');
+        stamp.className = 'dsh-tools-usageStamp';
+        stamp.textContent = updatedAt > 0
+          ? `${t('usageUpdated')} ${new Date(updatedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+          : '';
+        const refresh = document.createElement('button');
+        refresh.type = 'button';
+        refresh.className = 'dsh-tools-usageRefresh';
+        refresh.title = t('usageRefresh');
+        refresh.setAttribute('aria-label', t('usageRefresh'));
+        refresh.innerHTML = USAGE_REFRESH_GLYPH;
+        if (usageStore.state.status === 'loading' || usageStore._inflight !== null) refresh.disabled = true;
+        refresh.addEventListener('click', () => { usageStore.refresh(true); });
+        foot.append(stamp, refresh);
+        el.append(foot);
+
+        if (data?.partial === true) {
+          const warn = document.createElement('div');
+          warn.className = 'dsh-tools-usageWarn';
+          warn.textContent = t('usagePartial');
+          el.append(warn);
+        }
+        usagePopover.position();
+      },
+
+      close() {
+        if (usagePopover.unsubscribe !== null) {
+          usagePopover.unsubscribe();
+          usagePopover.unsubscribe = null;
+        }
+        if (usagePopover.onPointerDown !== null) {
+          window.removeEventListener('pointerdown', usagePopover.onPointerDown, true);
+          usagePopover.onPointerDown = null;
+        }
+        if (usagePopover.onKeyDown !== null) {
+          window.removeEventListener('keydown', usagePopover.onKeyDown, true);
+          usagePopover.onKeyDown = null;
+        }
+        if (usagePopover.onLayout !== null) {
+          window.removeEventListener('resize', usagePopover.onLayout, true);
+          window.removeEventListener('scroll', usagePopover.onLayout, true);
+          usagePopover.onLayout = null;
+        }
+        if (usagePopover.el !== null) {
+          usagePopover.el.remove();
+          usagePopover.el = null;
+        }
+        const onClose = usagePopover.opts?.onClose;
+        usagePopover.anchor = null;
+        usagePopover.opts = null;
+        if (typeof onClose === 'function') {
+          try { onClose(); } catch { /* chip may already be gone */ }
+        }
+      },
+    };
 
     function ensureGenStyles() {
       if (document.getElementById('dsh-tools-gen-styles') !== null) return;
@@ -840,11 +1258,21 @@ window.__ModuleLoader__.load({
 
           // Stable ref callback: React calls it once per mount/unmount, so
           // the injected row's lifecycle follows the bootstrap span exactly.
+          // Finding the card via closest('[data-composer-card]') is robust to
+          // any wrapper levels the slot renderer adds around entries (the
+          // fixed "two hops up" assumption broke in v0.6.7 when the overlay
+          // entry turned out not to be a direct child of the anchor).
           const attachBootstrap = (node) => {
             teardownRow();
             if (node === null) return;
-            const anchor = node.parentElement ?? null;
-            const card = anchor !== null ? anchor.parentElement ?? null : null;
+            let card = null;
+            if (typeof node.closest === 'function') {
+              try { card = node.closest('[data-composer-card]'); } catch { card = null; }
+            }
+            if (card === null) {
+              const anchor = node.parentElement ?? null;
+              card = anchor !== null ? anchor.parentElement ?? null : null;
+            }
             if (card === null || typeof card.querySelector !== 'function') return;
             rowEl = document.createElement('div');
             rowEl.className = 'dsh-tools-phraseBar';
@@ -901,6 +1329,7 @@ window.__ModuleLoader__.load({
             ['optimize', 'fOptimize'],
             ['history', 'fHistory'],
             ['sc', 'fSc'],
+            ['usage', 'fUsage'],
             ['phrases', 'fPhrases'],
           ];
 
@@ -1639,6 +2068,123 @@ window.__ModuleLoader__.load({
           };
         };
 
+        // ---- today's usage chip (slot sidebar.footer.action) ----
+        //
+        // The sidebar footer renders list occupants side-by-side above the
+        // settings/avatar row — exactly the empty bottom-left area. Expanded
+        // sidebar shows icon+label+compact value; the 56px rail shows an
+        // icon-only square. Click opens the detail popover.
+        const registerUsageWidget = () => {
+          if (React === null || typeof ctx?.slots?.register !== 'function') {
+            return () => {};
+          }
+          ensureUsageStyles();
+          usageCall = (method, payload) => call(method, payload);
+
+          const UsageRow = (props) => {
+            const wide = props?.wide !== false;
+            const subscribe = (listener) => usageStore.subscribe(listener);
+            const snap = typeof React.useSyncExternalStore === 'function'
+              ? React.useSyncExternalStore(subscribe, usageStore.snapshot, usageStore.snapshot)
+              : null;
+            const [, forceState] = React.useState(0);
+            React.useEffect(() => {
+              if (snap !== null) return undefined;
+              const rerender = () => forceState((value) => value + 1);
+              const unsubscribe = usageStore.subscribe(rerender);
+              return unsubscribe;
+            }, [snap !== null]);
+            const state = snap ?? usageStore.state;
+            const rootRef = React.useRef(null);
+            const [expanded, setExpanded] = React.useState(false);
+
+            // SWR: load on mount, refresh when the tab becomes visible, poll
+            // every 5 minutes while the chip lives.
+            React.useEffect(() => {
+              usageStore.ensure();
+              const onVisible = () => { if (document.visibilityState === 'visible') usageStore.ensure(); };
+              document.addEventListener('visibilitychange', onVisible);
+              const timer = typeof window.setInterval === 'function'
+                ? window.setInterval(() => { if (document.visibilityState === 'visible') usageStore.ensure(); }, 300_000)
+                : 0;
+              return () => {
+                document.removeEventListener('visibilitychange', onVisible);
+                if (timer !== 0 && typeof window.clearInterval === 'function') window.clearInterval(timer);
+              };
+            }, []);
+            React.useEffect(() => () => { if (expanded) usagePopover.close(); }, [expanded]);
+
+            if (featureFlags.usage !== true) return null;
+
+            const today = state.data?.today;
+            const valueClass = state.status === 'error' && state.data === null
+              ? 'dsh-tools-usageChipValue is-error'
+              : today !== undefined && (today.total ?? 0) === 0 && (today.requests ?? 0) === 0
+                ? 'dsh-tools-usageChipValue is-empty'
+                : 'dsh-tools-usageChipValue';
+            const valueText = state.status === 'error' && state.data === null
+              ? '—'
+              : formatTokens(today?.total ?? 0);
+            const iconClass = state.status === 'error' && state.data === null
+              ? 'dsh-tools-usageChipIcon is-error'
+              : 'dsh-tools-usageChipIcon';
+            const titleText = state.status === 'error' && state.data === null
+              ? t('usageError')
+              : `${t('usageTitle')} · ${t('usageRequests')} ${today?.requests ?? 0}`;
+
+            const toggle = (event) => {
+              event.stopPropagation();
+              const node = rootRef.current;
+              if (node === null || node.isConnected !== true) return;
+              if (expanded) {
+                usagePopover.close();
+                setExpanded(false);
+              } else {
+                usagePopover.open(node, { t, onClose: () => setExpanded(false) });
+                usageStore.refresh(true);
+                setExpanded(true);
+              }
+            };
+            const onKeyDown = (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggle(event);
+              }
+            };
+
+            const className = wide
+              ? 'dsh-tools-usageChip'
+              : 'dsh-tools-usageChip is-rail';
+            return React.createElement(
+              'button',
+              {
+                type: 'button',
+                ref: rootRef,
+                className,
+                title: titleText,
+                'aria-label': titleText,
+                'aria-haspopup': 'dialog',
+                'aria-expanded': expanded ? 'true' : 'false',
+                onClick: toggle,
+                onKeyDown,
+              },
+              React.createElement('span', { className: iconClass, dangerouslySetInnerHTML: { __html: USAGE_GLYPH } }),
+              wide ? React.createElement('span', { className: 'dsh-tools-usageChipLabel' }, t('usageTodayLabel')) : null,
+              wide ? React.createElement('span', { className: valueClass }, valueText) : null,
+            );
+          };
+
+          const unregister = ctx.slots.register(
+            { name: 'sidebar.footer.action', id: 'dsh-tools-usage', order: 5, label: () => t('usageTitle') },
+            (props) => React.createElement(UsageRow, props),
+          );
+          return () => {
+            try { unregister(); } catch { /* already gone */ }
+            usagePopover.close();
+            usageCall = null;
+          };
+        };
+
         // ---- state ----
         let menuHost = null;        // the [data-windows-menu] element we mounted into
         let styleEl = null;
@@ -1941,6 +2487,13 @@ window.__ModuleLoader__.load({
           keep(registerScUi());
         } catch (error) {
           console.warn('[dsh-tools] source control unavailable:', error);
+        }
+
+        // Today's token usage chip in the sidebar footer.
+        try {
+          keep(registerUsageWidget());
+        } catch (error) {
+          console.warn('[dsh-tools] usage widget unavailable:', error);
         }
 
         // Terminal-style ↑/↓ input history (plain DOM, always on).

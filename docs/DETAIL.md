@@ -1,6 +1,6 @@
 ![More menu with restart](preview.svg)
 
-Seven tools (see README for details):
+Eight tools (see README for details):
 
 1. **More → Restart DSH** — titlebar dropdown restarts the desktop app immediately (⚠ running tasks are interrupted); also **Reload plugins** hot-reloads installed plugin code without interrupting sessions.
 2. **Generate** — composer button drafting an intended reply from the last assistant message.
@@ -8,6 +8,7 @@ Seven tools (see README for details):
 4. **Input history** — ArrowUp/ArrowDown in the composer cycles through your own sent messages.
 5. **Source Control** — an entry in the right "Start" toolbar opens a VSCode-style tab in the right sidebar: scans only the current workspace (follows session switches automatically); git changes grouped per repository (groups start collapsed, click to expand; A/M/D/R badges), per-file diffs, checked-subset partial commits, AI-generated commit messages following the repo's own style, and push.
 6. **Quick phrases** — a row of phrase pills inside the composer card, right above the input; clicking one inserts it at the caret. Up to five shown, editable in Tools settings.
-7. **Tools settings** — Settings → Tools: per-feature switches, quick-phrase editor, custom model override, Source Control scan roots.
+7. **Today's token usage** — a compact chip at the sidebar's bottom-left (above the account row) showing the day's total token usage; clicking opens the details (input/output/cache-read/cache-write bars, a 7-day mini chart, request and active-session counts). Aggregated Host-side from session logs with billing-grade semantics, incrementally, 30 s cache; refreshes on click/tab-visible/5 min; shrinks to a 32×32 icon when the sidebar is collapsed.
+8. **Tools settings** — Settings → Tools: per-feature switches, quick-phrase editor, custom model override, Source Control scan roots.
 
 Host-side diagnostics: `%TEMP%\dsh-tools-debug.log`; restart helper log: `%TEMP%\dsh-tools-restart.log`.

@@ -1,8 +1,8 @@
-# dsh-tools 交付报告（2026-11-23，v0.6.7）
+# dsh-tools 交付报告（2026-11-23，v0.7.0）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.6.7 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.6 已热替换上线（log 无 duplicate、dev.ping=v0.6.6）+ 用户重启后仍报「感觉没变化」——v0.6.6 的 bottom:100% 与旧 translateY(-100%) 数学上同位，仅差 1px padding，判断正确。
+- 插件 `dsh-tools` v0.7.0 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.7 已热替换上线（dev.ping=v0.6.7）；用户 F5 后报常用语条消失 → v0.7.0 含修复。
 - **按钮重启已端到端验证成功**（v0.2.3 起多次实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
 - v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer。
@@ -15,6 +15,24 @@
 - v0.6.5：**资源控制只扫当前工作区**（主视图会话根互斥 registry，修复跨工作区父级/兄弟项目污染）+ 主视图切换自动重扫 + 空态显示实际扫描根（见下节）。
 - v0.6.6：**常用语条重叠修复第一轮**（官方 `bottom:100%`+gap 定位 + 弹层避让 + a11y）——定位数学上与旧版同位，用户无感（详见 v0.6.7 节）。
 - v0.6.7：**常用语条改卡片内文档流**——彻底放弃悬浮定位（见下节）。
+- v0.7.0：**侧栏「今日 Token 用量」组件** + **常用语条卡片定位修复**（见下节）。
+
+## v0.7.0（2026-11-23）
+
+### 今日 Token 用量（侧栏底部组件）
+
+- 侧栏左下角（账号行上方）`sidebar.footer.action` 注册「今日」小条：一眼显示当日总 token（输入+输出+缓存读+缓存写，`1.23M` 风格格式化）；点击弹出明细 popover——分项占比条（输入/输出/缓存读/缓存写）、近 7 天迷你柱状图（今日高亮）、请求数/活跃会话数 meta 行、更新时间+手动刷新。侧栏收起为图标栏时缩为 32×32 图标钮。`featureFlags.usage` 开关 + 工具设置面板对应项。
+- Host 侧 `usage.today` RPC：语义与 `dsh-token-meter` 的 `tokenUsage` 投影（stateVersion 2）完全一致——同一 usageOf 提取（assistant/message data.usage，否则流内最后一个 'usage' chunk）、同一 addReplacing 对 (turn, step) 的结算、同一 llm/retry-started 槽关闭——扩展点：桶归因到提交事件的**本地日历日**（跨午夜正确切分）。数据来自 `sessionQuery` 服务（listSessions+readSession，逐条校验克隆）；每会话增量 checkpoint（只折叠新事件），`USAGE_FRESH_MS` 限频缓存；force 绕过缓存并修剪死会话；14 天系列保留。
+- 客户端 SWR store：先展示过期数据再后台 revalidate；点击/切回标签页/每 5 分钟刷新；30s 读缓存。
+- 测试：新增 `scripts/test-usage.mjs` 22 项（纯折叠语义：替换记账/重试槽/跨午夜切分/垃圾容忍/增量 checkpoint/日期修剪 + 路由级 fake sessionQuery：增长/死会话修剪/缓存窗口/force 绕过）；test-client-render.cjs +13（chip 注册/宽+rail 两态/popover 分项/图表/meta/Escape/销毁）。
+
+### 常用语条卡片定位修复（用户 m04174：「提示词直接消失了」）
+
+- 现象：v0.6.7 部署 + 用户重启后，常用语条整个不渲染（截图证实输入框上方无 pill）。
+- 根因：v0.6.7 `attachBootstrap` 用固定「向上两级」假设（`node.parentElement.parentElement`）找 composer card；而 Cordis slot 渲染器经 RootEntry/entryKey 渲染条目，overlay 条目与 anchor 之间**存在包裹层级**——两跳落到了 anchor 上而非 card → `card.querySelector('[contenteditable]')` 落空 → `insertRow` 静默返回，行永不插入。
+- 修复：`attachBootstrap` 改用 `node.closest('[data-composer-card]')`（生成/优化按钮同款、生产验证过的选择器）定位 card，closest 不可用/落空再回退两级上跳。其余（编辑器宿主爬升 insertBefore、MutationObserver 重插守卫、store 订阅）不变。
+- 测试：test-client-render.cjs 步骤 7 的 fake DOM 链加 slot-entry wrapper 层（span→wrapper→anchor→card）+ `fakeSpanEl.closest` 返回 fakeCardEl——wrapper 层正是 v0.6.7 假设破裂的回归防护。
+- 测试：render 59 项（+13 usage +wrapper 链）、test-usage 22 项、smoke 32、test-sc 20、two-stage 回归过。
 
 ## v0.6.7（2026-11-23）
 

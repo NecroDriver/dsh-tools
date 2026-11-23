@@ -1,9 +1,9 @@
 # dsh-tools
 
-Desktop utilities for [DeepSeek Harness](https://dsh.ai) — seven tools:
+Desktop utilities for [DeepSeek Harness](https://dsh.ai) — eight tools:
 **Reload plugins & Restart DSH**, **生成 / Generate**, **优化 / Optimize**,
 **↑/↓ input history**, **资源控制 / Source Control**, **常用语 / Quick phrases**,
-and a **Tools settings** panel.
+**今日 Token 用量 / Today's token usage**, and a **Tools settings** panel.
 
 ## What it adds
 
@@ -100,14 +100,36 @@ climbs to the composer card, and inserts a plain-DOM row right above the draft
 editor; a MutationObserver re-inserts the row if a React re-render ever drops
 it.
 
-### 7. Tools settings (Settings → Tools)
+### 7. Today's token usage (sidebar foot)
+
+A compact **今日 / today** chip at the bottom-left of the sidebar, above the
+account row. It shows the day's total token usage at a glance (input + output
++ cache read + cache write, formatted `1.23M`-style) and opens a popover with
+the details:
+
+- today's total, plus one row per bucket — 输入 / 输出 / 缓存读 / 缓存写 —
+  each with a proportional bar and its own compact value;
+- a **近 7 天** mini column chart (today highlighted in the accent color);
+- a meta line with request count and active-session count, and a footer with
+  the last refresh time and a manual refresh button.
+
+Data is aggregated Host-side from durable session logs with billing-grade
+semantics (replacements and retries are folded the same way the token meter
+projects them; day attribution follows each event's own timestamp, so usage
+splits correctly across midnight). The widget refreshes on click, when the tab
+becomes visible, and every five minutes; reads are cached for 30 s and fold
+incrementally per session, so an idle sidebar costs nothing. When the sidebar
+is collapsed to the icon rail the chip shrinks to a 32×32 icon button.
+
+### 8. Tools settings (Settings → Tools)
 
 A **工具设置** section in the app settings: one switch per feature (More menu,
-Generate, Optimize, Input history, Source Control, Quick phrases), a custom
-model override (provider + model picked from the live `models.list` catalog —
-used by Generate/Optimize/commit-message instead of the session default), the
-quick-phrases editor (up to five entries), and the Source Control scan-roots
-editor (add via the native directory picker, remove individually).
+Generate, Optimize, Input history, Source Control, Quick phrases, Today's
+token usage), a custom model override (provider + model picked from the live
+`models.list` catalog — used by Generate/Optimize/commit-message instead of the
+session default), the quick-phrases editor (up to five entries), and the Source
+Control scan-roots editor (add via the native directory picker, remove
+individually).
 
 ## How it works
 
@@ -130,6 +152,13 @@ editor (add via the native directory picker, remove individually).
   right-sidebar tab type through the `sidebarRightTabs` service (guide entry +
   tab body in `sidebar.right.pane.tab`); the settings section into
   `settings.section`.
+- Today's token usage registers into `sidebar.footer.action` (the strip above
+  the account row). The Host's `usage.today` RPC folds durable session logs
+  through the same replacement/retry semantics the token-meter projection uses,
+  keeps per-session incremental checkpoints (only new events are folded), and
+  returns today's buckets, request count, a 14-day series, and the
+  active-session count. The client chip is SWR: it shows stale data instantly
+  and revalidates in the background.
 - Source Control runs real `git` via `git -C <repo> …` (`status
   --porcelain=v1 -z`, `diff HEAD --`, `add -A -- <paths>` + `commit -m … --
   <paths>` for pathspec-scoped partial commits, `log --pretty=format:%s`,
@@ -150,9 +179,16 @@ editor (add via the native directory picker, remove individually).
   repositories: scan/skip rules, status parsing (M/A/D/R + orig), tracked and
   synthetic diffs, partial-commit isolation, log, AI commit-message prompt
   composition, traversal guards.
+- `node scripts/test-usage.mjs` — token-usage aggregation: pure fold semantics
+  (replacement accounting, retry slots, cross-midnight splits, garbage
+  tolerance, incremental checkpoints, day pruning) plus the route-level
+  `usage.today` against a fake session-query service (growth, dead-session
+  pruning, cache window, force bypass).
 - `node scripts/test-client-render.cjs` — renders the client bundle in a VM
   with a mini React: guide-type registration, tab body mount, groups, badges,
-  diff view, checkboxes, partial commit flow, push, disposal.
+  diff view, checkboxes, partial commit flow, push, quick phrases, the usage
+  chip (wide + rail), its popover (buckets/chart/meta) and Escape handling,
+  disposal.
 - `node scripts/test-two-stage.cjs` — the hidden two-stage restart helper
   against dummy processes (needs the Electron node binary wiring it uses).
 - Host-side diagnostics go to `%TEMP%\dsh-tools-debug.log` (module load,
@@ -167,5 +203,8 @@ editor (add via the native directory picker, remove individually).
 - Generate/Optimize need the Host-side `llm` service (present in the desktop
   Web Host); without it the buttons report `llm-unavailable`.
 - Generate only sees the last assistant reply, not the whole conversation.
+- Token usage counts what the local session logs record — usage from other
+  machines or deleted sessions is not included; the 近 7 天 series keeps the
+  last 14 days only.
 - Source Control reads one workspace level of git metadata: submodules are not
   recursed, and `.gitignore`d files are skipped by git itself.

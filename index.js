@@ -35,7 +35,7 @@ export const inject = ['webServer', 'connection'];
 
 // Single source of truth for the running generation; dev.ping reports it so the
 // Client can confirm a hot reload actually swapped this module.
-const MODULE_VERSION = 'v0.6.7';
+const MODULE_VERSION = 'v0.7.0';
 
 const RPC_KEY = 'dsh-tools';
 const HELPER_PATH = join(tmpdir(), 'dsh-tools-restart.ps1');
@@ -343,6 +343,7 @@ const METHODS = {
   'sc.commitMessage': handleScCommitMessage,
   'sc.commit': handleScCommit,
   'sc.push': handleScPush,
+  'usage.today': handleUsageToday,
 };
 
 // ---- settings: per-feature switches + assist model override ----
@@ -352,7 +353,7 @@ const METHODS = {
 // DSH_TOOLS_HOME overrides the directory wholesale (used by tests).
 
 const DEFAULT_SETTINGS = Object.freeze({
-  features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true, phrases: true },
+  features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true, phrases: true, usage: true },
   model: { provider: '', model: '' },   // '' = follow the app's default model
   sc: { roots: [] },                    // extra source-control scan roots (absolute dirs)
   phrases: [],                          // quick phrases floating above the composer (max 5)
@@ -1097,6 +1098,302 @@ async function handleScPush(payload) {
   }
 }
 
+// ---- usage: per-day token usage aggregation (sidebar "today" widget) ----
+//
+// Semantics mirror dsh-token-meter's `tokenUsage` projection (stateVersion 2)
+// exactly — same usageOf extraction (assistant/message data.usage, else the
+// last 'usage' chunk embedded in the event's stream), same addReplacing
+// settlement over (turn, step), same llm/retry-started slot closing — with one
+// extension: buckets are attributed to the LOCAL DAY of the committing event,
+// so the fold answers "how much did today cost" without loading Session
+// objects or touching projection registries. Data comes from the sessionQuery
+// service (listSessions + readSession), which validates and clones every log;
+// the per-session fold state is kept incrementally so unchanged prefix work
+// is never redone, and the whole rescan is rate-limited by USAGE_FRESH_MS.
+
+export const USAGE_KEEP_DAYS = 14;
+
+function createUsageDay() {
+  return { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, requests: 0 };
+}
+
+export function createUsageState() {
+  // seen: number of events already folded (incremental checkpoint).
+  // days: Map<local 'YYYY-MM-DD', day buckets>. last: open replacement slot.
+  return { seen: 0, days: new Map(), last: null };
+}
+
+/** Local-calendar day key ('2026-11-23'); zero-padded so keys sort by date. */
+export function usageDayKey(time, timeZone) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit', timeZone,
+  });
+  return formatter.format(new Date(time));
+}
+
+function systemTimeZone() {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof tz === 'string' && tz !== '' ? tz : undefined;
+  } catch { return undefined; }
+}
+
+/** Last 'usage' chunk of an assistant stream, mirroring lastAssistantStreamChunk(stream, 'usage'). */
+export function lastUsageChunk(stream) {
+  if (!Array.isArray(stream)) return undefined;
+  for (let i = stream.length - 1; i >= 0; i -= 1) {
+    const chunk = stream[i];
+    if (chunk !== null && typeof chunk === 'object' && chunk.type === 'usage') return chunk.usage;
+  }
+  return undefined;
+}
+
+/** The usage one durable Assistant settlement reports, if any (token-meter's usageOf). */
+export function usageOfEvent(event) {
+  const data = event?.data;
+  if (typeof data !== 'object' || data === null) return undefined;
+  if (event.type === 'assistant/message' && data.usage !== undefined) return data.usage;
+  if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') return undefined;
+  return lastUsageChunk(data.stream);
+}
+
+function bucketsFromUsage(usage) {
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cacheReadTokens: usage.cacheReadTokens ?? 0,
+    cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+  };
+}
+
+function usageBucketsEqual(left, right) {
+  return left.inputTokens === right.inputTokens
+    && left.outputTokens === right.outputTokens
+    && left.cacheReadTokens === right.cacheReadTokens
+    && left.cacheWriteTokens === right.cacheWriteTokens;
+}
+
+function isFiniteBucketNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function usageSampleIsPlausible(usage) {
+  return usage !== null && typeof usage === 'object'
+    && isFiniteBucketNumber(usage.inputTokens) && isFiniteBucketNumber(usage.outputTokens);
+}
+
+function usageDayFor(state, dayKey) {
+  let day = state.days.get(dayKey);
+  if (day === undefined) {
+    day = createUsageDay();
+    state.days.set(dayKey, day);
+  }
+  return day;
+}
+
+function addToDay(day, buckets, sign) {
+  day.inputTokens += sign * buckets.inputTokens;
+  day.outputTokens += sign * buckets.outputTokens;
+  day.cacheReadTokens += sign * buckets.cacheReadTokens;
+  day.cacheWriteTokens += sign * buckets.cacheWriteTokens;
+}
+
+/**
+ * Fold one event into a day-attributed usage state (token-meter semantics).
+ * Mutates `state`; callers checkpoint via state.seen.
+ */
+function applyUsageEvent(state, event, timeZone) {
+  const data = event?.data;
+  if (typeof data !== 'object' || data === null) return;
+  if (event.type === 'llm/retry-started') {
+    if (state.last !== null && state.last.turn === data.turn && state.last.step === data.step) {
+      state.last = null;
+    }
+    return;
+  }
+  if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') return;
+  const sample = usageOfEvent(event);
+  if (!usageSampleIsPlausible(sample)) return;
+  const { turn, step } = data;
+  const buckets = bucketsFromUsage(sample);
+  const previous = state.last !== null && state.last.turn === turn && state.last.step === step
+    ? state.last
+    : null;
+  if (previous !== null && usageBucketsEqual(previous.buckets, buckets)) {
+    previous.time = event.time; // same settlement re-stamped; no delta
+    return;
+  }
+  const dayKey = usageDayKey(event.time, timeZone);
+  const isMessage = event.type === 'assistant/message';
+  if (previous !== null) {
+    // Replacement: retract the previous sample from ITS day, add the new one
+    // to the new event's day (usually the same day; splits only across
+    // midnight, which is exactly the billing-fair answer).
+    const previousKey = usageDayKey(previous.time, timeZone);
+    const previousDay = state.days.get(previousKey);
+    if (previousDay !== undefined) addToDay(previousDay, previous.buckets, -1);
+    addToDay(usageDayFor(state, dayKey), buckets, +1);
+  } else {
+    addToDay(usageDayFor(state, dayKey), buckets, +1);
+  }
+  // "requests" = settled assistant messages. A slot opened by a live attempt
+  // counts when its final message lands; a message replacing a message (same
+  // settlement re-settled) never double-counts.
+  if (isMessage && !(previous !== null && previous.fromMessage)) {
+    usageDayFor(state, dayKey).requests += 1;
+  }
+  state.last = { turn, step, buckets, time: event.time, fromMessage: isMessage };
+}
+
+/**
+ * Incrementally fold `events` into `state` (which may already hold a prefix).
+ * A shorter array than the checkpoint means the log was rewritten (fork
+ * replace, torn-tail repair): the state resets and refolds from zero.
+ * Prunes days older than USAGE_KEEP_DAYS from `todayKey`.
+ */
+export function foldUsageEvents(state, events, todayKey, timeZone) {
+  const list = Array.isArray(events) ? events : [];
+  if (list.length < state.seen) {
+    state.seen = 0;
+    state.days = new Map();
+    state.last = null;
+  }
+  for (let i = state.seen; i < list.length; i += 1) applyUsageEvent(state, list[i], timeZone);
+  state.seen = list.length;
+  if (todayKey !== undefined) {
+    const keepFrom = shiftDayKey(todayKey, -(USAGE_KEEP_DAYS - 1));
+    for (const key of state.days.keys()) {
+      if (key < keepFrom) state.days.delete(key);
+    }
+  }
+  return state;
+}
+
+/** Shift a 'YYYY-MM-DD' key by `days` (local calendar math, DST-safe). */
+export function shiftDayKey(dayKey, days) {
+  const [year, month, date] = String(dayKey).split('-').map((part) => Number.parseInt(part, 10));
+  const shifted = new Date(year, month - 1, date + days);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${shifted.getFullYear()}-${pad(shifted.getMonth() + 1)}-${pad(shifted.getDate())}`;
+}
+
+function usageDayTotal(day) {
+  return day.inputTokens + day.outputTokens + day.cacheReadTokens + day.cacheWriteTokens;
+}
+
+/**
+ * Aggregate per-session states into the RPC payload.
+ * @param states iterable of [sessionId, state]
+ * @returns {{today, days, activeSessions}} wire shape
+ */
+export function buildUsagePayload(states, now = Date.now()) {
+  const timeZone = systemTimeZone();
+  const todayKey = usageDayKey(now, timeZone);
+  const days = new Map();
+  let activeSessions = 0;
+  for (const [, state] of states) {
+    let touchedToday = false;
+    for (const [key, day] of state.days) {
+      const total = usageDayTotal(day);
+      if (total <= 0 && day.requests <= 0) continue;
+      if (key === todayKey && (total > 0 || day.requests > 0)) touchedToday = true;
+      const merged = days.get(key) ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, requests: 0 };
+      merged.inputTokens += day.inputTokens;
+      merged.outputTokens += day.outputTokens;
+      merged.cacheReadTokens += day.cacheReadTokens;
+      merged.cacheWriteTokens += day.cacheWriteTokens;
+      merged.requests += day.requests;
+      days.set(key, merged);
+    }
+    if (touchedToday) activeSessions += 1;
+  }
+  const series = [];
+  for (let offset = -(USAGE_KEEP_DAYS - 1); offset <= 0; offset += 1) {
+    const key = shiftDayKey(todayKey, offset);
+    const day = days.get(key);
+    series.push({
+      day: key,
+      isToday: offset === 0,
+      inputTokens: day?.inputTokens ?? 0,
+      outputTokens: day?.outputTokens ?? 0,
+      cacheReadTokens: day?.cacheReadTokens ?? 0,
+      cacheWriteTokens: day?.cacheWriteTokens ?? 0,
+      requests: day?.requests ?? 0,
+      total: day !== undefined ? usageDayTotal(day) : 0,
+    });
+  }
+  const today = series[series.length - 1];
+  return { timeZone, today, days: series, activeSessions };
+}
+
+// Host-side caches. One rescan walks every logical session through readSession
+// (which validates + clones the full log); USAGE_FRESH_MS rate-limits it and
+// concurrent callers share the in-flight scan.
+const USAGE_FRESH_MS = 30_000;
+let sessionQueryService = null;
+const usageSessions = new Map();
+let usageResultCache = null;
+let usageInflight = null;
+
+async function scanUsage(log) {
+  const service = sessionQueryService;
+  if (service === null || typeof service.listSessions !== 'function' || typeof service.readSession !== 'function') {
+    return failure('unavailable', 'sessionQuery service is not available on this Host.');
+  }
+  const timeZone = systemTimeZone();
+  const todayKey = usageDayKey(Date.now(), timeZone);
+  const records = await service.listSessions();
+  const live = new Set();
+  for (const record of Array.isArray(records) ? records : []) {
+    const id = record?.header?.id;
+    if (id === undefined) continue;
+    live.add(id);
+    try {
+      const snapshot = await service.readSession(id);
+      const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+      const state = usageSessions.get(id) ?? createUsageState();
+      foldUsageEvents(state, events, todayKey, timeZone);
+      usageSessions.set(id, state);
+    } catch (error) {
+      debugLog(`usage: session ${String(id)} skipped: ${String(error?.message ?? error)}`);
+    }
+  }
+  for (const id of usageSessions.keys()) {
+    if (!live.has(id)) usageSessions.delete(id);
+  }
+  const payload = buildUsagePayload(usageSessions);
+  usageResultCache = { generatedAt: Date.now(), payload };
+  return { ok: true, value: payload };
+}
+
+async function handleUsageToday(payload) {
+  const force = isRecord(payload) && payload.force === true;
+  const now = Date.now();
+  if (!force && usageResultCache !== null && now - usageResultCache.generatedAt < USAGE_FRESH_MS) {
+    return { ok: true, value: usageResultCache.payload };
+  }
+  if (usageInflight !== null) {
+    await usageInflight.catch(() => {});
+    if (usageResultCache !== null && Date.now() - usageResultCache.generatedAt < USAGE_FRESH_MS) {
+      return { ok: true, value: usageResultCache.payload };
+    }
+  }
+  const log = (message, level = 'info') => {
+    const target = console;
+    try { (target[level] ?? target.log).call(target, message); } catch { /* silent */ }
+  };
+  usageInflight = scanUsage(log);
+  const settle = () => { usageInflight = null; };
+  usageInflight.then(settle, settle);
+  return usageInflight;
+}
+
+function resetUsageState() {
+  usageSessions.clear();
+  usageResultCache = null;
+  usageInflight = null;
+}
+
 async function dispatch(method, payload) {
   const handler = Object.hasOwn(METHODS, method) ? METHODS[method] : undefined;
   if (handler === undefined) {
@@ -1263,16 +1560,21 @@ export function apply(ctx) {
   const stopSelector = captureService(ctx, 'agentDefaultModel', (service) => { modelSelector = service; }, () => { modelSelector = null; }, log);
   const stopRegistry = captureService(ctx, 'workspaceRegistry', (service) => { workspaceRegistryService = service; }, () => { workspaceRegistryService = null; }, log);
   const stopHmr = captureService(ctx, 'hmr', (service) => { hmrService = service; }, () => { hmrService = null; }, log);
+  const stopSessionQuery = captureService(ctx, 'sessionQuery', (service) => {
+    sessionQueryService = service;
+    resetUsageState(); // new Host generation: no stale cross-day aggregates
+  }, () => { sessionQueryService = null; }, log);
   // Teardown: Cordis only honors ctx.effect() disposers on plugin stop — a
   // plain return value is IGNORED, which left routes owned by dead fibers
   // serving stale code after HMR swaps (found 2026-11-23: /api/dsh-tools was
   // still answered by the v0.6.0 fiber across three "hot" updates). Register
   // the real hook when present; keep the return value for bare test stubs.
   let tornDown = false;
-  const stops = [stopHmr, stopRegistry, stopSelector, stopLlm, stopFetch, stopRoute];
+  const stops = [stopSessionQuery, stopHmr, stopRegistry, stopSelector, stopLlm, stopFetch, stopRoute];
   const teardown = () => {
     if (tornDown) return;
     tornDown = true;
+    resetUsageState();
     for (const stop of stops) {
       try { stop(); } catch { /* already gone */ }
     }
