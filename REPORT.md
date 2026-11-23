@@ -1,14 +1,25 @@
-# dsh-tools 交付报告（2026-11-23，v0.6.0）
+# dsh-tools 交付报告（2026-11-23，v0.6.1）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.6.0 安装于 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
+- 插件 `dsh-tools` v0.6.1 安装于 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
 - **按钮重启已端到端验证成功**（v0.2.3 起多次实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
 - v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer。
 - v0.4.0：**输入历史 ↑/↓**（终端式）——光标在输入框时 ↑ 载入上一条**用户已发送消息**（DOM `[data-chat-flow-kind="user"]` 实时读取），↓ 向最新回走，越过最新恢复原草稿。v0.4.3：历史文本清洗（时间戳/隐藏重复块折叠）。
 - v0.5.0：**输入栏「优化」按钮**（提示词改写，composer 生成/优化期间锁定）+ **系统设置 → 工具设置**（每功能开关、自定义模型 provider+model、模型目录来自 `models.list`）。
 - v0.6.0：**侧边栏「资源控制」**——类 VSCode 面板（见下节）。
+- v0.6.1：**「更多 → 重载插件」**——热重载入口（见下节），回应「每次都重启打断任务」的问题。
+
+## v0.6.1（2026-11-23）
+
+### 重载插件（热重载，不打断会话）
+
+- 背景：用户反馈「为什么每次都要重启，其他任务都被停掉了；开发 dsh-im-notify 时没有这种情况」。源码调查：DSH 自带 HMR（`@deepseek-ai/dsh-hmr`）——`reconcileProfile()`（须在 `runExclusive` 内）recompose profile 并**热替换加载文件变化的运行中插件**；plugin-manager 的 install/开关即走此路径。此前必须重启是因为：① Web Host 只在启动时从磁盘加载插件代码；② v0.2.1 实证会话 Host 的 set_plugin 热重载不作用于 Web Host；③ 早期版本改了 link 包代码但 profile manifest/patch 未变，无人触发 reconcile。
+- Host（`index.js`）：`dev.ping`（返回 `{version: MODULE_VERSION, pid}`——版本变化即热替换成功的证据）与 `dev.reconcile`（运行时捕获 `hmr` 服务→`hmr.runExclusive(() => hmr.reconcileProfile())`；**setTimeout(0) 异步执行**——自替换会停掉正在应答 RPC 的 fiber 吞掉回复，必须先回 `{scheduled:true}`；结果写 debug log：restartReason/pending/warnings）。`hmr` 缺席→`hmr-unavailable` 错误。
+- Client（`client.js`）：「更多」菜单 idle 态两项=**重载插件**（旋转箭头图标，info 色 hint）+分隔线+原**重启 DSH**（⚠ warn hint）；`doReload()`=`dev.ping` 记 versionBefore→`dev.reconcile`→14×700ms 轮询 `dev.ping` 直到 version 变化→done（附「F5 后界面完全生效」提示行）；路由重注册窗口 RPC 可能瞬断→catch 继续轮询；超时→`reloadUnknown`。busy/done/error 按 `menuMode` 区分文案与图标。
+- 测试：smoke 扩至 26 项全过（dev.ping 形状/无 hmr→hmr-unavailable+details 合法/fake hmr→scheduled 立即返回+reconcile 异步真跑）；client 渲染 22 项、two-stage 回归过。
+- **新部署协议**：今后更新插件默认走 install→「重载插件」（或 Web Host 文件监听自动 reconcile），不再未经用户同意重启应用；重启仅保留给 reconcile 报 `restartReason`/`pending` 或 DSH 核心更新的场景。
 
 ## v0.6.0（2026-11-23）
 

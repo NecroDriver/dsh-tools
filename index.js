@@ -33,6 +33,10 @@ export const name = 'dsh-tools';
 // access ctx.webServer / ctx.connection directly.
 export const inject = ['webServer', 'connection'];
 
+// Single source of truth for the running generation; dev.ping reports it so the
+// Client can confirm a hot reload actually swapped this module.
+const MODULE_VERSION = 'v0.6.1';
+
 const RPC_KEY = 'dsh-tools';
 const HELPER_PATH = join(tmpdir(), 'dsh-tools-restart.ps1');
 const HELPER_LOG = join(tmpdir(), 'dsh-tools-restart.log');
@@ -325,6 +329,8 @@ export function launchRestartHelper(facts, payload) {
 const METHODS = {
   restart: handleRestart,
   'restart.plan': async () => ({ ok: true, value: { ...desktopFacts(), scheduled: restartScheduled } }),
+  'dev.ping': async () => ({ ok: true, value: { version: MODULE_VERSION, pid: process.pid } }),
+  'dev.reconcile': handleDevReconcile,
   suggest: handleSuggest,
   optimize: handleOptimize,
   'settings.get': async () => ({ ok: true, value: { settings: getSettings() } }),
@@ -524,6 +530,42 @@ async function handleModelsList() {
 // every other tool keeps working — suggest just reports llm-unavailable.
 let llmService = null;
 let modelSelector = null;
+
+// ---- dev.reconcile: hot-reload installed plugin code without an app restart ----
+//
+// DSH ships an HMR service (bundle @deepseek-ai/dsh-hmr, present in Hosts that
+// expose profileContext). Its reconcileProfile() recomposes the profile and
+// replaces running plugins whose loaded files under the profile directory or
+// its linked package targets changed on disk — including this plugin. That is
+// the mechanism plugin installs flow through when the GUI applies them, and it
+// is what makes "update code, reload, keep every session alive" possible.
+let hmrService = null;
+
+async function handleDevReconcile() {
+  const hmr = hmrService;
+  if (hmr === null || typeof hmr.reconcileProfile !== 'function' || typeof hmr.runExclusive !== 'function') {
+    return failure('hmr-unavailable', 'This Host does not expose the hmr service; an app restart is required to pick up plugin changes.');
+  }
+  // Replacing this very module stops the fiber that is answering this RPC,
+  // which would swallow the reply, so the reconciliation runs after the reply
+  // is on the wire. Outcome lands in the debug log.
+  setTimeout(() => {
+    try {
+      hmr.runExclusive(() => hmr.reconcileProfile())
+        .then((result) => {
+          debugLog(`dev.reconcile done: restartReason=${result?.restartReason ?? 'none'}`
+            + ` pending=${(result?.pending ?? []).length} warnings=${(result?.warnings ?? []).length}`);
+          for (const warning of result?.warnings ?? []) debugLog(`dev.reconcile warning: ${String(warning)}`);
+        })
+        .catch((error) => {
+          debugLog(`dev.reconcile failed: ${String(error?.message ?? error)}`);
+        });
+    } catch (error) {
+      debugLog(`dev.reconcile dispatch failed: ${String(error?.message ?? error)}`);
+    }
+  }, 0);
+  return { ok: true, value: { scheduled: true } };
+}
 
 const SUGGEST_MAX_INPUT = 24000;   // chars of context sent to the model
 const SUGGEST_MAX_TOKENS = 220;
@@ -1161,8 +1203,8 @@ export function apply(ctx) {
       console.log(message);
     }
   };
-  log('[dsh-tools] host module loaded (v0.6.0)');
-  debugLog('host module loaded (v0.6.0)');
+  log(`[dsh-tools] host module loaded (${MODULE_VERSION})`);
+  debugLog(`host module loaded (${MODULE_VERSION})`);
   const stopRoute = installWebServerRoute(ctx, log);
   const stopFetch = installConnectionFetch(ctx, log);
   // Runtime child fibers: capture optional services when this Host provides
@@ -1170,7 +1212,9 @@ export function apply(ctx) {
   const stopLlm = captureService(ctx, 'llm', (service) => { llmService = service; }, () => { llmService = null; }, log);
   const stopSelector = captureService(ctx, 'agentDefaultModel', (service) => { modelSelector = service; }, () => { modelSelector = null; }, log);
   const stopRegistry = captureService(ctx, 'workspaceRegistry', (service) => { workspaceRegistryService = service; }, () => { workspaceRegistryService = null; }, log);
+  const stopHmr = captureService(ctx, 'hmr', (service) => { hmrService = service; }, () => { hmrService = null; }, log);
   return () => {
+    stopHmr();
     stopRegistry();
     stopSelector();
     stopLlm();

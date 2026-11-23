@@ -24,6 +24,13 @@ window.__ModuleLoader__.load({
         more: '更多',
         restart: '重启 DSH',
         restartHint: '⚠ 点击立即重启，正在运行的任务将会中断',
+        reload: '重载插件',
+        reloadHint: '热重载已安装的插件代码，不打断会话',
+        reloadBusy: '正在重载…',
+        reloadDone: '已重载',
+        reloadDoneHint: '界面代码刷新（F5）后完全生效',
+        reloadUnknown: '已触发，但未确认版本变化；详见日志或重启',
+        actionFailed: '操作失败',
         scheduling: '正在安排重启…',
         restarting: '正在重启，请稍候…',
         close: '关闭',
@@ -97,6 +104,13 @@ window.__ModuleLoader__.load({
         more: 'More',
         restart: 'Restart DSH',
         restartHint: '⚠ Restarts immediately; running tasks will be interrupted',
+        reload: 'Reload plugins',
+        reloadHint: 'Hot-reload installed plugin code; sessions keep running',
+        reloadBusy: 'Reloading…',
+        reloadDone: 'Reloaded',
+        reloadDoneHint: 'Refresh (F5) to pick up UI changes',
+        reloadUnknown: 'Triggered, but no version change confirmed; check the log or restart',
+        actionFailed: 'Action failed',
         scheduling: 'Scheduling restart…',
         restarting: 'Restarting…',
         close: 'Close',
@@ -186,6 +200,7 @@ window.__ModuleLoader__.load({
       '.dsh-tools-menu{position:absolute;top:calc(var(--dsh-windows-titlebar-height,40px) - 4px);z-index:1200;min-width:250px;padding:6px;border-radius:10px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 10px 30px rgba(0,0,0,.20);font:inherit;font-size:14px;color:var(--dsw-alias-label-primary);}',
       '.dsh-tools-menu *{box-sizing:border-box;font:inherit;}',
       '.dsh-tools-sep{height:1px;margin:6px 8px;background:var(--dsw-alias-border-l1);}',
+      '.dsh-tools-hintInfo{color:var(--dsw-alias-label-secondary,inherit);}',
       '.dsh-tools-item{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:inherit;font-size:14px;text-align:left;cursor:default;}',
       '.dsh-tools-item:hover:not(:disabled),.dsh-tools-item:focus-visible:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));outline:none;}',
       '.dsh-tools-itemGlyph{display:inline-flex;color:var(--dsw-alias-label-secondary);flex:none;}',
@@ -1320,6 +1335,7 @@ window.__ModuleLoader__.load({
         let menuEl = null;          // open dropdown element, inside the shadow
         let phase = 'idle';         // idle | busy | done | error
         let errorMessage = '';
+        let menuMode = 'restart';   // which action busy/done/error reflect
 
         const closeMenu = () => {
           if (menuEl !== null) {
@@ -1341,6 +1357,7 @@ window.__ModuleLoader__.load({
         };
 
         const doRestart = async () => {
+          menuMode = 'restart';
           phase = 'busy';
           renderMenu();
           try {
@@ -1360,6 +1377,43 @@ window.__ModuleLoader__.load({
           renderMenu();
         };
 
+        // Hot-reload installed plugin code via the Host's hmr service; the
+        // outcome is confirmed by watching dev.ping's module version change.
+        const doReload = async () => {
+          menuMode = 'reload';
+          phase = 'busy';
+          renderMenu();
+          try {
+            let versionBefore = '';
+            try {
+              const ping = await call('dev.ping', {});
+              if (ping?.ok === true) versionBefore = String(ping?.value?.version ?? '');
+            } catch { /* keep "" — best effort */ }
+            const result = await call('dev.reconcile', {});
+            if (result?.ok !== true) {
+              const err = result?.error;
+              throw new Error(typeof err?.message === 'string' && err.message !== ''
+                ? (typeof err?.code === 'string' && err.code !== '' ? `[${err.code}] ${err.message}` : err.message)
+                : t('errorGeneric'));
+            }
+            let confirmed = false;
+            for (let i = 0; i < 14; i += 1) {
+              await new Promise((resolve) => { setTimeout(resolve, 700); });
+              try {
+                const ping = await call('dev.ping', {});
+                const version = ping?.ok === true ? String(ping?.value?.version ?? '') : '';
+                if (version !== '' && version !== versionBefore) { confirmed = true; break; }
+              } catch { /* routes re-register while fibers restart; keep polling */ }
+            }
+            if (confirmed) phase = 'done';
+            else { phase = 'error'; errorMessage = t('reloadUnknown'); }
+          } catch (error) {
+            phase = 'error';
+            errorMessage = error?.message ?? String(error);
+          }
+          renderMenu();
+        };
+
         const renderMenu = () => {
           if (menuEl === null) return;
           clearMenu();
@@ -1369,25 +1423,46 @@ window.__ModuleLoader__.load({
             const item = el('button', 'dsh-tools-item');
             item.type = 'button';
             item.setAttribute('role', 'menuitem');
-            item.addEventListener('click', () => { void doRestart(); });
+            item.addEventListener('click', () => { void doReload(); });
             const glyph = el('span', 'dsh-tools-itemGlyph');
-            glyph.innerHTML = RESTART_GLYPH;
+            glyph.innerHTML = SC_REFRESH_GLYPH;
             const main = el('span', 'dsh-tools-itemMain');
-            main.append(el('span', 'dsh-tools-itemTitle', t('restart')));
-            main.append(el('span', 'dsh-tools-itemHint', t('restartHint')));
+            main.append(el('span', 'dsh-tools-itemTitle', t('reload')));
+            main.append(el('span', 'dsh-tools-itemHint dsh-tools-hintInfo', t('reloadHint')));
             item.append(glyph, main);
             menuEl.append(item);
+            menuEl.append(el('div', 'dsh-tools-sep'));
+            // One-click restart: the ⚠ warning in the hint replaces the old
+            // confirmation dialog (user request 2026-11-19).
+            const restartItem = el('button', 'dsh-tools-item');
+            restartItem.type = 'button';
+            restartItem.setAttribute('role', 'menuitem');
+            restartItem.addEventListener('click', () => { void doRestart(); });
+            const restartGlyph = el('span', 'dsh-tools-itemGlyph');
+            restartGlyph.innerHTML = RESTART_GLYPH;
+            const restartMain = el('span', 'dsh-tools-itemMain');
+            restartMain.append(el('span', 'dsh-tools-itemTitle', t('restart')));
+            restartMain.append(el('span', 'dsh-tools-itemHint', t('restartHint')));
+            restartItem.append(restartGlyph, restartMain);
+            menuEl.append(restartItem);
           } else if (phase === 'busy' || phase === 'done') {
+            const reloadFlow = menuMode === 'reload';
             const status = el('div', 'dsh-tools-status');
             const title = el('div', 'dsh-tools-statusTitle');
             const glyph = el('span', 'dsh-tools-itemGlyph dsh-tools-spin');
-            glyph.innerHTML = RESTART_GLYPH;
-            title.append(glyph, el('span', null, phase === 'busy' ? t('scheduling') : t('restarting')));
+            glyph.innerHTML = reloadFlow ? SC_REFRESH_GLYPH : RESTART_GLYPH;
+            const busyText = reloadFlow ? t('reloadBusy') : t('scheduling');
+            const doneText = reloadFlow ? t('reloadDone') : t('restarting');
+            glyph.classList.toggle('dsh-tools-spin', !(reloadFlow && phase === 'done'));
+            title.append(glyph, el('span', null, phase === 'busy' ? busyText : doneText));
             status.append(title);
+            if (reloadFlow && phase === 'done') {
+              status.append(el('div', 'dsh-tools-itemHint dsh-tools-hintInfo', t('reloadDoneHint')));
+            }
             menuEl.append(status);
           } else if (phase === 'error') {
             const status = el('div', 'dsh-tools-status');
-            status.append(el('div', 'dsh-tools-strong', t('errorTitle')));
+            status.append(el('div', 'dsh-tools-strong', menuMode === 'reload' ? t('actionFailed') : t('errorTitle')));
             status.append(el('div', 'dsh-tools-errorText', errorMessage || t('errorGeneric')));
             const actions = el('div', 'dsh-tools-actions');
             const close = el('button', 'dsh-tools-btn', t('close'));

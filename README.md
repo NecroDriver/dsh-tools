@@ -1,19 +1,27 @@
 # dsh-tools
 
 Desktop utilities for [DeepSeek Harness](https://dsh.ai) — six tools:
-**Restart DSH**, **生成 / Generate**, **优化 / Optimize**, **↑/↓ input
-history**, **资源控制 / Source Control**, and a **Tools settings** panel.
+**Reload plugins & Restart DSH**, **生成 / Generate**, **优化 / Optimize**,
+**↑/↓ input history**, **资源控制 / Source Control**, and a **Tools settings**
+panel.
 
 ## What it adds
 
-### 1. Restart DSH (titlebar)
+### 1. Reload plugins / Restart DSH (titlebar)
 
 A **更多 / More** button in the Windows caption bar (the strip at the top of the
-window that renders **应用** and **编辑**), with a dropdown that offers **重启
-DSH / Restart DSH**. Choosing it restarts immediately — no confirmation dialog;
-the ⚠ hint on the item warns that running tasks will be interrupted — and stops
-the DeepSeek Harness desktop app (the Electron shell and its Host process) and
-relaunches it.
+window that renders **应用** and **编辑**), with a dropdown that offers two
+actions:
+
+- **重载插件 / Reload plugins** — hot-reloads installed plugin code through the
+  Host's `hmr` service (`reconcileProfile()`): DSH recomposes the profile and
+  replaces running plugins whose files changed on disk. Sessions keep running;
+  the menu confirms success by watching the module version reported by
+  `dev.ping` change. UI (client) code fully lands after a page refresh (F5).
+- **重启 DSH / Restart DSH** — restarts immediately: no confirmation dialog;
+  the ⚠ hint on the item warns that running tasks will be interrupted. It stops
+  the DeepSeek Harness desktop app (the Electron shell and its Host process) and
+  relaunches it.
 
 The button only exists in the desktop app's title bar. In a plain browser
 session (`dsh web`) nothing is rendered.
@@ -109,7 +117,8 @@ individually).
 
 - `node scripts/smoke.mjs` — Host route handler offline: envelope validation,
   loopback/same-origin rejection, dry-run restart plan, suggest/optimize
-  happy paths + failure codes, settings persistence, models.list.
+  happy paths + failure codes, settings persistence, models.list, dev.ping /
+  dev.reconcile (hot-reload scheduling).
 - `node scripts/test-sc.mjs` — Source Control against real temporary git
   repositories: scan/skip rules, status parsing (M/A/D/R + orig), tracked and
   synthetic diffs, partial-commit isolation, log, AI commit-message prompt

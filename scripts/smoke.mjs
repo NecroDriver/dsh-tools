@@ -253,6 +253,45 @@ check('models.list → providers with normalized models + default selection',
   && catalog?.defaultSelection?.provider === 'deepseek'
   && catalog?.override?.provider === 'fast');
 
+// --- dev.ping / dev.reconcile: hot-reload support surface ---
+res = await post({ headers: baseHeaders, body: envelope('dev.ping', {}) });
+message = JSON.parse(res.payload);
+check('dev.ping → ok with version and pid',
+  envelopeGuard(res.payload) && message.result?.ok === true
+  && typeof message.result?.value?.version === 'string'
+  && typeof message.result?.value?.pid === 'number');
+res = await post({ headers: baseHeaders, body: envelope('dev.reconcile', {}) });
+message = JSON.parse(res.payload);
+check('dev.reconcile without hmr service → ok:false hmr-unavailable',
+  envelopeGuard(res.payload) && message.result?.ok === false
+  && message.result?.error?.code === 'hmr-unavailable'
+  && typeof message.result?.error?.details === 'object' && message.result?.error?.details !== null);
+// Capture the hmr fiber the same way apply() registers it, then retry:
+// the reply must come back before the (async) reconciliation runs.
+const hmrFiber = fibers.find((fiber) => fiber.names.includes('hmr'));
+const reconcileCalls = [];
+hmrFiber.cb({
+  hmr: {
+    runExclusive: (fn) => { reconcileCalls.push('runExclusive'); return Promise.resolve(fn()); },
+    reconcileProfile: async () => {
+      reconcileCalls.push('reconcileProfile');
+      return { warnings: [], pending: [], restartReason: null };
+    },
+  },
+});
+res = await post({ headers: baseHeaders, body: envelope('dev.reconcile', {}) });
+message = JSON.parse(res.payload);
+// setTimeout(0) races with promise resolution; poll briefly instead of a
+// single setImmediate so the check stays deterministic.
+for (let i = 0; i < 50 && reconcileCalls.length < 2; i += 1) {
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+}
+check('dev.reconcile with hmr → scheduled immediately, reconciliation runs async',
+  envelopeGuard(res.payload) && message.result?.ok === true
+  && message.result?.value?.scheduled === true
+  && reconcileCalls.length === 2
+  && reconcileCalls[0] === 'runExclusive' && reconcileCalls[1] === 'reconcileProfile');
+
 // --- fetch leg (connection.fetch bus) ---
 const fakeRequest = ({ headers = {}, body = null, method = 'POST' } = {}) => ({
   method,
