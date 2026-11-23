@@ -1,7 +1,8 @@
 # dsh-tools
 
-Desktop utilities for [DeepSeek Harness](https://dsh.ai) — currently three
-tools: **Restart DSH**, **生成 / Generate**, and **↑/↓ input history**.
+Desktop utilities for [DeepSeek Harness](https://dsh.ai) — six tools:
+**Restart DSH**, **生成 / Generate**, **优化 / Optimize**, **↑/↓ input
+history**, **资源控制 / Source Control**, and a **Tools settings** panel.
 
 ## What it adds
 
@@ -27,7 +28,16 @@ box, replacing whatever was typed. The button shows a spinner while streaming
 and surfaces `[code] message` on failure. If no assistant reply exists yet it
 says so and does nothing.
 
-### 3. Input history (composer, ↑/↓)
+### 3. Optimize prompt (composer)
+
+An **优化 / Optimize** button next to Generate. It takes the current composer
+text and rewrites it into a prompt the AI understands and executes more easily
+(goal, context, constraints, structured steps — intent, language, and tech
+choices preserved). While Generate or Optimize is streaming, the composer is
+locked (read-only) so the draft cannot race your keystrokes; it unlocks on
+success or failure.
+
+### 4. Input history (composer, ↑/↓)
 
 Terminal-style: with the caret in the composer, **ArrowUp** loads the previous
 message you sent into the input box (replacing its content), **ArrowDown**
@@ -35,39 +45,82 @@ walks back toward the newest, and cycling past the newest restores the draft
 you were typing. History mode only engages when the box is empty or the caret
 is at the very start of the text, so plain caret movement in multi-line drafts
 keeps working; any other key hands control back to normal editing. History is
-read live from the transcript (`[data-chat-flow-kind="user"]` rows), so it
-always matches what the session shows.
+read live from the transcript (`[data-chat-flow-kind="user"]` rows, timestamps
+and duplicated hidden blocks stripped), so it always matches what the session
+shows.
+
+### 5. Source Control (sidebar)
+
+A **资源控制** icon button at the bottom of the sidebar (next to settings)
+toggles a VSCode-style drawer:
+
+- Repositories are discovered by scanning all registered workspace roots (plus
+  custom roots from Tools settings), three levels deep, skipping
+  `node_modules`/build directories.
+- Changes are grouped per repository with branch name and count; each file row
+  shows a status badge — **A**dded (green), **M**odified (blue), **D**eleted
+  (red), **R**enamed (amber, with original path) — plus staged indication.
+- Clicking a file renders its diff (tracked files: `git diff HEAD`; untracked
+  files: a synthetic all-plus new-file diff).
+- Check a subset of files, then **commit** — the commit stages and commits only
+  the checked paths, so unselected changes stay untouched in the working copy.
+- **AI 生成 / Generate message** asks the model to draft a commit message in
+  this repository's own style: the Host reads the last 20 commit subjects as a
+  style reference and includes the per-file diffs of exactly the selected
+  files. The draft is editable before committing.
+- After committing, a **push** button appears on the group header.
+
+### 6. Tools settings (Settings → Tools)
+
+A **工具设置** section in the app settings: one switch per feature (More menu,
+Generate, Optimize, Input history, Source Control), a custom model override
+(provider + model picked from the live `models.list` catalog — used by
+Generate/Optimize/commit-message instead of the session default), and the
+Source Control scan-roots editor (add via the native directory picker, remove
+individually).
 
 ## How it works
 
 - The Client half waits for the preload-owned caption menubar
   (`[data-windows-menu]`, an open shadow root) and appends one button that
   matches the existing 应用/编辑 styles, plus its own dropdown.
-- The dropdown calls the Host half through `ctx.connection.rpc.call('/api',
-  'dsh-tools', …)`. The Host route is loopback-only and same-origin, and
-  validates that its parent process really is the DeepSeek Harness executable
-  recorded in `DSH_NODE_EXECUTABLE` before doing anything.
+- All Host calls go through `ctx.connection.rpc.call('/api', 'dsh-tools', …)`.
+  The Host route is loopback-only and same-origin; the restart path additionally
+  validates that its parent process really is the DeepSeek Harness executable.
 - A short-lived PowerShell wrapper (spawned hidden) starts the real helper via
   WMI `Win32_Process.Create` (`ShowWindow=0`), so it survives the process tree
   teardown: it stops the app and the Host (plus the Host's children), waits for
   all PIDs to exit, relaunches the executable, and confirms the relaunch. It
   logs to `%TEMP%\dsh-tools-restart.log`.
-- The Generate button registers into the `conversation.input.right` slot. The
-  Host's `suggest` method reads the reply text sent by the client (capped at
-  24 000 chars), calls `ctx.llm.prepareCall` with the model from
-  `agentDefaultModel.currentSelection()`, streams the answer, strips quotes and
-  code fences, and returns the draft. The client inserts it into the Lexical
-  composer via select-all + `insertText`.
+- Generate/Optimize register into the `conversation.input.right` slot; the
+  Source Control entry into `sidebar.footer.action` and its drawer into
+  `shell.overlay`; the settings section into `settings.section`.
+- Source Control runs real `git` via `git -C <repo> …` (`status
+  --porcelain=v1 -z`, `diff HEAD --`, `add -A -- <paths>` + `commit -m … --
+  <paths>` for pathspec-scoped partial commits, `log --pretty=format:%s`,
+  `push`). File paths are validated against traversal and must be current
+  working-copy changes at commit time.
+- LLM features use `ctx.llm.prepareCall` with the model from
+  `agentDefaultModel.currentSelection()` or the Tools-settings override,
+  stream the answer, and strip quotes/code fences. The composer draft is
+  inserted into the Lexical composer via select-all + `insertText`.
 
 ## Verify / debug
 
-- `node scripts/smoke.mjs` — exercises the Host route handler offline
-  (envelope validation, loopback/same-origin rejection, dry-run restart plan,
-  suggest happy path + failure codes).
-- The dropdown's error state shows the Host's failure message (for example when
-  DSH runs outside the desktop app).
+- `node scripts/smoke.mjs` — Host route handler offline: envelope validation,
+  loopback/same-origin rejection, dry-run restart plan, suggest/optimize
+  happy paths + failure codes, settings persistence, models.list.
+- `node scripts/test-sc.mjs` — Source Control against real temporary git
+  repositories: scan/skip rules, status parsing (M/A/D/R + orig), tracked and
+  synthetic diffs, partial-commit isolation, log, AI commit-message prompt
+  composition, traversal guards.
+- `node scripts/test-client-render.cjs` — renders the client bundle in a VM
+  with a mini React: entry button, drawer open, groups, badges, diff view,
+  checkboxes, partial commit flow, push, Esc handling.
+- `node scripts/test-two-stage.cjs` — the hidden two-stage restart helper
+  against dummy processes (needs the Electron node binary wiring it uses).
 - Host-side diagnostics go to `%TEMP%\dsh-tools-debug.log` (module load,
-  dispatch results, suggest timing).
+  dispatch results, suggest timing, restart decisions).
 
 ## Limitations
 
@@ -75,7 +128,8 @@ always matches what the session shows.
   Host was not started by the desktop shell.
 - Restart is a force stop: running tasks are interrupted, though sessions stay
   durable and reopen after relaunch.
-- Generate needs the Host-side `llm` service (present in the desktop Web Host);
-  without it the button reports `llm-unavailable` instead of guessing a route.
-- The draft is a starting point: the model only sees the last assistant reply,
-  not the whole conversation.
+- Generate/Optimize need the Host-side `llm` service (present in the desktop
+  Web Host); without it the buttons report `llm-unavailable`.
+- Generate only sees the last assistant reply, not the whole conversation.
+- Source Control reads one workspace level of git metadata: submodules are not
+  recursed, and `.gitignore`d files are skipped by git itself.

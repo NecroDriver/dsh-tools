@@ -18,9 +18,9 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -330,6 +330,13 @@ const METHODS = {
   'settings.get': async () => ({ ok: true, value: { settings: getSettings() } }),
   'settings.set': handleSettingsSet,
   'models.list': handleModelsList,
+  'sc.repos': handleScRepos,
+  'sc.status': handleScStatus,
+  'sc.diff': handleScDiff,
+  'sc.log': handleScLog,
+  'sc.commitMessage': handleScCommitMessage,
+  'sc.commit': handleScCommit,
+  'sc.push': handleScPush,
 };
 
 // ---- settings: per-feature switches + assist model override ----
@@ -339,8 +346,9 @@ const METHODS = {
 // DSH_TOOLS_HOME overrides the directory wholesale (used by tests).
 
 const DEFAULT_SETTINGS = Object.freeze({
-  features: { moreMenu: true, generate: true, optimize: true, history: true },
+  features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true },
   model: { provider: '', model: '' },   // '' = follow the app's default model
+  sc: { roots: [] },                    // extra source-control scan roots (absolute dirs)
 });
 
 function settingsDirectory() {
@@ -359,6 +367,7 @@ function mergeSettings(stored) {
   const merged = {
     features: { ...DEFAULT_SETTINGS.features },
     model: { ...DEFAULT_SETTINGS.model },
+    sc: { roots: [] },
   };
   if (isRecord(stored?.features)) {
     for (const key of Object.keys(merged.features)) {
@@ -368,6 +377,11 @@ function mergeSettings(stored) {
   if (isRecord(stored?.model)) {
     if (typeof stored.model.provider === 'string') merged.model.provider = stored.model.provider;
     if (typeof stored.model.model === 'string') merged.model.model = stored.model.model;
+  }
+  if (Array.isArray(stored?.sc?.roots)) {
+    merged.sc.roots = stored.sc.roots
+      .filter((root) => typeof root === 'string' && root.trim() !== '')
+      .slice(0, 32);
   }
   return merged;
 }
@@ -424,6 +438,23 @@ async function handleSettingsSet(payload) {
         return failure('bad-request', 'Model override needs both provider and model, or neither (empty strings).');
       }
       next.model = { provider, model };
+      changed = true;
+    }
+  }
+  if (isRecord(payload.sc) && Array.isArray(payload.sc.roots)) {
+    const cleaned = [];
+    const seenRoots = new Set();
+    for (const candidate of payload.sc.roots) {
+      if (cleaned.length >= 32) break;
+      if (typeof candidate !== 'string' || candidate.trim() === '') continue;
+      const absolute = resolve(candidate.trim());
+      const key = absolute.toLowerCase();
+      if (seenRoots.has(key)) continue;
+      seenRoots.add(key);
+      cleaned.push(absolute);
+    }
+    if (cleaned.join('\n') !== next.sc.roots.join('\n')) {
+      next.sc.roots = cleaned;
       changed = true;
     }
   }
@@ -510,6 +541,13 @@ const OPTIMIZE_SYSTEMS = {
   en: 'You improve prompts written to an AI coding assistant. The user\'s draft prompt is provided below. Rewrite it into a version the AI can understand and execute more easily: make the goal explicit, fill in missing context and constraints, and organize the structure (bullet points are fine) — without changing the user\'s intent, language, or technology choices. Preserve any code, paths, identifiers, and proper nouns from the original. Output only the improved prompt itself: no explanations, wrappers, quotes, or code fences.',
 };
 
+const COMMIT_MAX_TOKENS = 200;
+
+const COMMIT_SYSTEMS = {
+  zh: '你在帮用户为一个 git 提交写 commit message。下面提供该仓库最近的提交标题（风格参考）和本次要提交的改动内容（diff）。请生成一条与仓库历史风格一致的 commit message：沿用历史的语言与格式（例如历史用 conventional commits 前缀「type(scope):」就照用），准确概括这些改动做了什么。只输出 commit message 本身：首行不超过 72 个字符，需要时可用一个空行接正文；不要任何解释、引号或代码围栏。',
+  en: 'You write a commit message for one git commit. The repository\'s recent commit subjects (style reference) and the diff being committed are provided below. Produce a commit message consistent with the repository\'s history: same language and format as the history (e.g. keep conventional-commits "type(scope):" prefixes if the history uses them), accurately summarizing what these changes do. Output only the commit message itself: first line ≤72 characters, optionally a blank line then a body; no explanations, quotes, or code fences.',
+};
+
 /** Extract and normalize the text a suggest draft will be based on. */
 export function prepareSuggestInput(rawReply) {
   const text = String(rawReply ?? '').replace(/\u00a0/g, ' ').trim();
@@ -563,8 +601,10 @@ async function runAssist(kind, payload) {
   if (typeof route.provider !== 'string' || route.provider === '') {
     return failure('no-model', 'No model is configured for this feature (see dsh-tools settings).');
   }
-  const systems = kind === 'optimize' ? OPTIMIZE_SYSTEMS : SUGGEST_SYSTEMS;
-  const maxTokens = kind === 'optimize' ? OPTIMIZE_MAX_TOKENS : SUGGEST_MAX_TOKENS;
+  const systems = kind === 'optimize' ? OPTIMIZE_SYSTEMS
+    : kind === 'commit' ? COMMIT_SYSTEMS : SUGGEST_SYSTEMS;
+  const maxTokens = kind === 'optimize' ? OPTIMIZE_MAX_TOKENS
+    : kind === 'commit' ? COMMIT_MAX_TOKENS : SUGGEST_MAX_TOKENS;
   const started = Date.now();
   const signal = AbortSignal.timeout(ASSIST_TIMEOUT_MS);
   let call;
@@ -614,6 +654,358 @@ async function handleOptimize(payload) {
     return failure('empty-context', 'The composer is empty — write a draft prompt first.');
   }
   return runAssist('optimize', { source: payload.prompt, lang: payload.lang });
+}
+
+// ---- source control: grouped working-copy changes, partial commits ----
+//
+// v0.6 capability: the Client half renders a "资源控制" drawer next to the
+// sidebar settings entry. This half owns every git invocation (execFile argv
+// arrays, never a shell) plus the repository scan:
+//   sc.repos         → repositories under workspace dirs + settings.sc.roots
+//   sc.status        → `git status --porcelain=v1 -z` parsed into files[]
+//   sc.diff          → `git diff HEAD -- <path>` (tracked) or a synthetic
+//                      new-file diff (untracked), capped
+//   sc.log           → recent commit subjects (style reference for the AI)
+//   sc.commitMessage → runAssist('commit') over the selected diffs + history
+//   sc.commit        → `git add -A -- <selected>` + `git commit -m msg -- <selected>`;
+//                      the pathspec commit takes only those paths' worktree
+//                      state, so unrelated staged changes stay staged
+//   sc.push          → `git push` (never force; respects the branch upstream)
+
+let workspaceRegistryService = null;
+
+const SC_SCAN_DEPTH = 3;          // levels below each root
+const SC_MAX_DIRS = 3000;         // directories visited per scan
+const SC_MAX_REPOS = 60;
+const SC_MAX_FILES = 500;         // files reported per repository
+const SC_DIFF_MAX_CHARS = 80000;  // diff text returned to the drawer
+const SC_DIFF_FILE_MAX = 6000;    // per-file diff fed to the commit model
+const SC_DIFF_TOTAL_MAX = 20000;  // total diff fed to the commit model
+const SC_LOG_COUNT = 30;
+const SC_MAX_SELECTED = 200;
+const SC_SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'target', 'venv', '.venv', '__pycache__', 'coverage', '.cache']);
+
+function runGit(repo, args, options = {}) {
+  return execFileAsync('git', ['-C', repo, ...args], {
+    timeout: options.timeout ?? 15000,
+    maxBuffer: 16 * 1024 * 1024,
+    windowsHide: true,
+    encoding: 'utf8',
+  });
+}
+
+function gitFailure(error, repo, label) {
+  const stderr = String(error?.stderr ?? '').trim();
+  const stdout = String(error?.stdout ?? '').trim();
+  const tail = (stderr !== '' ? stderr : stdout).split('\n').slice(-8).join('\n').slice(0, 1500);
+  return failure('git-error', `${label} failed in ${repo}: ${tail || String(error?.message ?? error)}`, {
+    repo, label,
+  });
+}
+
+/** Valid absolute directory that contains a .git entry (dir or worktree file). */
+function requireScRepo(payload) {
+  const candidate = isRecord(payload) && typeof payload.repo === 'string' ? payload.repo.trim() : '';
+  if (candidate === '' || !isAbsolute(candidate)) return null;
+  const repo = resolve(candidate);
+  try {
+    if (!statSync(repo).isDirectory()) return null;
+    if (!existsSync(join(repo, '.git'))) return null;
+  } catch { return null; }
+  return repo;
+}
+
+/** A git pathspec: in-repo relative, forward slashes, no traversal tricks. */
+function validateScFile(repo, filePath) {
+  if (typeof filePath !== 'string' || filePath === '' || filePath.length > 512) return null;
+  if (filePath.includes('\0') || filePath.startsWith('-')
+    || /^[a-z]:/i.test(filePath) || filePath.startsWith('/') || filePath.startsWith('\\')) return null;
+  const normalized = filePath.replace(/\\/g, '/');
+  for (const part of normalized.split('/')) {
+    if (part === '' || part === '.' || part === '..') return null;
+  }
+  const base = resolve(repo);
+  const absolute = resolve(repo, normalized);
+  if (absolute !== base && !absolute.startsWith(`${base}\\`) && !absolute.startsWith(`${base}/`)) return null;
+  return normalized;
+}
+
+function collectScRoots() {
+  const roots = new Map(); // lowercased absolute → original casing
+  const add = (candidate) => {
+    if (typeof candidate !== 'string' || candidate.trim() === '') return;
+    const absolute = resolve(candidate.trim());
+    const key = absolute.toLowerCase();
+    if (roots.has(key)) return;
+    try {
+      if (!statSync(absolute).isDirectory()) return;
+    } catch { return; }
+    roots.set(key, absolute);
+  };
+  try {
+    const workspaces = workspaceRegistryService !== null
+      && typeof workspaceRegistryService.list === 'function'
+      ? workspaceRegistryService.list() : [];
+    for (const workspace of Array.isArray(workspaces) ? workspaces : []) add(workspace?.path);
+  } catch { /* registry is a bonus; settings roots still work */ }
+  for (const root of getSettings().sc.roots) add(root);
+  return [...roots.values()];
+}
+
+function scanForRepos(roots) {
+  const repos = [];
+  const seen = new Set();
+  const queue = roots.map((dir) => ({ dir, depth: 0 }));
+  let visited = 0;
+  while (queue.length > 0 && visited < SC_MAX_DIRS && repos.length < SC_MAX_REPOS) {
+    const { dir, depth } = queue.shift();
+    const key = dir.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    visited += 1;
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch { continue; }
+    let isRepo = false;
+    const descend = [];
+    for (const entry of entries) {
+      if (entry.name === '.git') isRepo = true;
+      else if (entry.isDirectory() && !entry.name.startsWith('.') && !SC_SKIP_DIRS.has(entry.name)) {
+        descend.push(entry.name);
+      }
+    }
+    if (isRepo) { repos.push(dir); continue; } // never descend into a repository
+    if (depth >= SC_SCAN_DEPTH) continue;
+    for (const name of descend) queue.push({ dir: join(dir, name), depth: depth + 1 });
+  }
+  repos.sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+  return repos.map((path) => ({ id: path, name: basename(path), path }));
+}
+
+/** Parse `git status --porcelain=v1 -z` output. */
+export function parsePorcelain(raw) {
+  const records = String(raw ?? '').split('\0');
+  const files = [];
+  for (let i = 0; i < records.length; i += 1) {
+    const record = records[i];
+    if (record.length < 4) continue;
+    const xy = record.slice(0, 2);
+    const path = record.slice(3);
+    if (path === '') continue;
+    if (xy === '!!') continue; // ignored entries (only with --ignored) — not working-copy changes
+    let orig = null;
+    if (xy[0] === 'R' || xy[0] === 'C') {
+      orig = typeof records[i + 1] === 'string' && records[i + 1] !== '' ? records[i + 1] : null;
+      i += 1; // the original path follows as its own NUL-terminated record
+    }
+    let status = 'M';
+    if (xy === '??') status = 'A';
+    else if (xy[0] === 'A' || xy[1] === 'A') status = 'A';
+    else if (xy[0] === 'D' || xy[1] === 'D') status = 'D';
+    else if (xy[0] === 'R' || xy[1] === 'R') status = 'R';
+    files.push({ path, status, staged: xy[0] !== ' ' && xy !== '??' && xy !== '!!', orig });
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path, 'en'));
+  return files;
+}
+
+async function currentChanges(repo) {
+  const result = await runGit(repo, ['status', '--porcelain=v1', '-z']);
+  return parsePorcelain(result.stdout);
+}
+
+async function handleScRepos() {
+  const roots = collectScRoots();
+  const repos = scanForRepos(roots);
+  return { ok: true, value: { roots, repos, truncated: repos.length >= SC_MAX_REPOS } };
+}
+
+async function handleScStatus(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  let files;
+  try {
+    files = await currentChanges(repo);
+  } catch (error) {
+    return gitFailure(error, repo, 'git status');
+  }
+  const truncated = files.length > SC_MAX_FILES;
+  let branch = '';
+  try {
+    branch = (await runGit(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim();
+  } catch { /* unborn HEAD or similar */ }
+  return { ok: true, value: { repo, branch, files: files.slice(0, SC_MAX_FILES), truncated } };
+}
+
+/** Untracked files have no HEAD diff — render a "+ every line" diff instead. */
+export function syntheticNewFileDiff(repo, file) {
+  try {
+    const content = readFileSync(resolve(repo, file), 'utf8');
+    if (content.includes('\u0000')) {
+      return `diff --git a/${file} b/${file}\nnew file mode 100644\nBinary file\n`;
+    }
+    const lines = content.split('\n');
+    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+    const body = lines.map((line) => `+${line}`).join('\n');
+    return `diff --git a/${file} b/${file}\nnew file mode 100644\n--- /dev/null\n+++ b/${file}\n${body}\n`;
+  } catch {
+    return `diff --git a/${file} b/${file}\nnew file mode 100644\n(file no longer exists)\n`;
+  }
+}
+
+async function diffOneFile(repo, entry) {
+  // Untracked paths have no HEAD diff — detect via the index, not status
+  // flags, so stale callers still render a proper new-file diff.
+  const tracked = (await runGit(repo, ['ls-files', '--', entry.path])).stdout.trim() !== '';
+  if (!tracked) return syntheticNewFileDiff(repo, entry.path);
+  const result = await runGit(repo, ['diff', 'HEAD', '--', entry.path], { timeout: 20000 });
+  if (result.stdout.trim() === '' && entry.orig !== null) {
+    const renamed = await runGit(repo, ['diff', 'HEAD', '--', entry.orig], { timeout: 20000 });
+    return renamed.stdout;
+  }
+  return result.stdout;
+}
+
+async function handleScDiff(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  const file = validateScFile(repo, isRecord(payload) ? payload.file : null);
+  if (file === null) return failure('bad-request', 'A valid in-repository file path is required.');
+  const untracked = isRecord(payload) && payload.untracked === true;
+  let text = '';
+  if (untracked) {
+    text = syntheticNewFileDiff(repo, file);
+  } else {
+    try {
+      text = await diffOneFile(repo, { path: file, status: 'M', staged: false, orig: null });
+    } catch (error) {
+      return gitFailure(error, repo, 'git diff');
+    }
+  }
+  if (text.length > SC_DIFF_MAX_CHARS) {
+    text = `${text.slice(0, SC_DIFF_MAX_CHARS)}\n… (diff truncated)`;
+  }
+  return { ok: true, value: { repo, file, diff: text } };
+}
+
+async function handleScLog(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  try {
+    const result = await runGit(repo, ['log', '-n', String(SC_LOG_COUNT), '--pretty=format:%s']);
+    const subjects = result.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+    return { ok: true, value: { repo, subjects } };
+  } catch (error) {
+    const message = String(error?.stderr ?? error?.message ?? error);
+    if (message.includes('does not have any commits yet')) {
+      return { ok: true, value: { repo, subjects: [] } };
+    }
+    return gitFailure(error, repo, 'git log');
+  }
+}
+
+/** Resolve the requested files against a fresh status snapshot. */
+async function resolveSelection(repo, requested) {
+  if (!Array.isArray(requested) || requested.length === 0) {
+    return { error: failure('bad-request', 'Select at least one file first.') };
+  }
+  if (requested.length > SC_MAX_SELECTED) {
+    return { error: failure('bad-request', `Too many files selected (max ${SC_MAX_SELECTED}).`) };
+  }
+  let changes;
+  try {
+    changes = await currentChanges(repo);
+  } catch (error) {
+    return { error: gitFailure(error, repo, 'git status') };
+  }
+  const byPath = new Map(changes.map((entry) => [entry.path, entry]));
+  const selected = [];
+  for (const candidate of requested) {
+    const file = validateScFile(repo, candidate);
+    if (file === null) return { error: failure('bad-request', `Invalid file path: ${String(candidate)}`) };
+    const entry = byPath.get(file);
+    if (entry === undefined) {
+      return { error: failure('bad-request', `Not a current working-copy change: ${file}`) };
+    }
+    selected.push(entry);
+  }
+  return { selected };
+}
+
+async function handleScCommitMessage(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  const selection = await resolveSelection(repo, payload?.files);
+  if (selection.error !== undefined) return selection.error;
+  let subjects = [];
+  try {
+    const log = await runGit(repo, ['log', '-n', '20', '--pretty=format:%s']);
+    subjects = log.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+  } catch { /* empty repo → no style reference */ }
+  const sections = [];
+  if (subjects.length > 0) {
+    sections.push(`## Recent commit subjects (style reference)\n${subjects.join('\n')}`);
+  }
+  const chunks = [];
+  let budget = SC_DIFF_TOTAL_MAX;
+  for (const entry of selection.selected) {
+    if (budget <= 0) break;
+    let diff = '';
+    try {
+      diff = await diffOneFile(repo, entry);
+    } catch { diff = '(diff unavailable)'; }
+    if (diff.length > SC_DIFF_FILE_MAX) diff = `${diff.slice(0, SC_DIFF_FILE_MAX)}\n… (truncated)`;
+    const chunk = `### ${entry.path} (${entry.status})\n${diff}`.slice(0, SC_DIFF_FILE_MAX + 128);
+    chunks.push(chunk);
+    budget -= chunk.length;
+  }
+  sections.push(`## Changes to commit\n${chunks.join('\n\n')}`);
+  return runAssist('commit', { source: sections.join('\n\n'), lang: payload?.lang });
+}
+
+async function handleScCommit(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  const message = typeof payload?.message === 'string' ? payload.message.trim() : '';
+  if (message === '' || message.length > 500 || /[\u0000-\u0008\u000b-\u001f]/.test(message)) {
+    return failure('bad-request', 'Commit message must be 1-500 characters (no control characters).');
+  }
+  const selection = await resolveSelection(repo, payload?.files);
+  if (selection.error !== undefined) return selection.error;
+  const pathspecs = new Set();
+  for (const entry of selection.selected) {
+    pathspecs.add(entry.path);
+    if (entry.orig !== null) pathspecs.add(entry.orig); // renames commit both sides
+  }
+  const paths = [...pathspecs];
+  try {
+    // Stage exactly the selected paths (covers additions, edits, deletions);
+    // the pathspec commit below then takes just these paths' worktree state,
+    // leaving anything else the user had staged still staged.
+    await runGit(repo, ['add', '-A', '--', ...paths]);
+    await runGit(repo, ['commit', '-m', message, '--', ...paths], { timeout: 30000 });
+  } catch (error) {
+    return gitFailure(error, repo, 'git commit');
+  }
+  let hash = '';
+  try {
+    hash = (await runGit(repo, ['rev-parse', '--short', 'HEAD'])).stdout.trim();
+  } catch { /* hash is informational */ }
+  debugLog(`sc.commit repo=${repo} files=${selection.selected.length} → ${hash}`);
+  return { ok: true, value: { commit: hash, count: selection.selected.length } };
+}
+
+async function handleScPush(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  try {
+    const result = await runGit(repo, ['push'], { timeout: 120000 });
+    const output = `${String(result.stdout ?? '')}\n${String(result.stderr ?? '')}`.trim();
+    return { ok: true, value: { repo, output: output.split('\n').slice(-6).join('\n').slice(0, 1200) } };
+  } catch (error) {
+    return gitFailure(error, repo, 'git push');
+  }
 }
 
 async function dispatch(method, payload) {
@@ -769,15 +1161,17 @@ export function apply(ctx) {
       console.log(message);
     }
   };
-  log('[dsh-tools] host module loaded (v0.5.0)');
-  debugLog('host module loaded (v0.5.0)');
+  log('[dsh-tools] host module loaded (v0.6.0)');
+  debugLog('host module loaded (v0.6.0)');
   const stopRoute = installWebServerRoute(ctx, log);
   const stopFetch = installConnectionFetch(ctx, log);
   // Runtime child fibers: capture optional services when this Host provides
   // them. Pending forever is fine — suggest degrades to a clear error.
   const stopLlm = captureService(ctx, 'llm', (service) => { llmService = service; }, () => { llmService = null; }, log);
   const stopSelector = captureService(ctx, 'agentDefaultModel', (service) => { modelSelector = service; }, () => { modelSelector = null; }, log);
+  const stopRegistry = captureService(ctx, 'workspaceRegistry', (service) => { workspaceRegistryService = service; }, () => { workspaceRegistryService = null; }, log);
   return () => {
+    stopRegistry();
     stopSelector();
     stopLlm();
     stopFetch();

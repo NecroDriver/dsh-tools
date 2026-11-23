@@ -57,6 +57,41 @@ window.__ModuleLoader__.load({
         modelsLoading: '正在加载模型列表…',
         modelsFailed: '模型列表加载失败',
         modelsEmpty: '未发现可用模型',
+        sc: '资源控制',
+        scEntryTitle: '打开资源控制面板',
+        scRefresh: '刷新',
+        scClose: '关闭面板',
+        scLoading: '正在扫描仓库…',
+        scEmpty: '未发现 git 仓库',
+        scEmptyHint: '自动扫描工作区目录；也可在工具设置里添加其他根目录。',
+        scFailed: '加载失败',
+        scClean: '没有变更',
+        scTruncated: '变更过多，仅显示前一部分',
+        scSelectAll: '全选',
+        scClear: '清空',
+        scStagedDot: '已暂存',
+        stA: '新增',
+        stM: '修改',
+        stD: '删除',
+        stR: '重命名',
+        scMessagePlaceholder: '提交信息（可编辑）…',
+        scGenMsg: 'AI 生成',
+        scGenMsging: '生成中…',
+        scCommit: '提交',
+        scCommitting: '提交中…',
+        scCommitted: '已提交',
+        scPush: '推送',
+        scPushing: '推送中…',
+        scPushed: '已推送',
+        scNoMsg: '先填写或生成提交信息',
+        scNoFiles: '勾选要提交的文件',
+        scDiffFailed: 'diff 加载失败',
+        scSelectHint: '勾选文件后可单笔提交',
+        fSc: '侧边栏「资源控制」面板',
+        scRootsTitle: '资源控制扫描根目录',
+        scRootsIntro: '自动扫描所有工作区目录；可再添加其他根目录（向下最多 3 层）。',
+        scAddRoot: '添加目录',
+        scRemoveRoot: '移除',
       },
       en: {
         more: 'More',
@@ -95,6 +130,41 @@ window.__ModuleLoader__.load({
         modelsLoading: 'Loading models…',
         modelsFailed: 'Failed to load models',
         modelsEmpty: 'No models discovered',
+        sc: 'Source Control',
+        scEntryTitle: 'Open the Source Control panel',
+        scRefresh: 'Refresh',
+        scClose: 'Close panel',
+        scLoading: 'Scanning repositories…',
+        scEmpty: 'No git repositories found',
+        scEmptyHint: 'Workspace directories are scanned automatically; add more roots in Tools settings.',
+        scFailed: 'Failed to load',
+        scClean: 'No changes',
+        scTruncated: 'Too many changes; showing the first part only',
+        scSelectAll: 'Select all',
+        scClear: 'Clear',
+        scStagedDot: 'Staged',
+        stA: 'Added',
+        stM: 'Modified',
+        stD: 'Deleted',
+        stR: 'Renamed',
+        scMessagePlaceholder: 'Commit message (editable)…',
+        scGenMsg: 'AI generate',
+        scGenMsging: 'Generating…',
+        scCommit: 'Commit',
+        scCommitting: 'Committing…',
+        scCommitted: 'Committed',
+        scPush: 'Push',
+        scPushing: 'Pushing…',
+        scPushed: 'Pushed',
+        scNoMsg: 'Write or generate a commit message first',
+        scNoFiles: 'Select files to commit',
+        scDiffFailed: 'Failed to load diff',
+        scSelectHint: 'Select files to commit them alone',
+        fSc: 'Sidebar "Source Control" panel',
+        scRootsTitle: 'Source Control scan roots',
+        scRootsIntro: 'Workspace directories are scanned automatically; add more roots (up to 3 levels deep).',
+        scAddRoot: 'Add directory',
+        scRemoveRoot: 'Remove',
       },
     };
 
@@ -106,6 +176,7 @@ window.__ModuleLoader__.load({
       generate: true,
       optimize: true,
       history: true,
+      sc: true,
     };
     const modelOverride = { provider: '', model: '' };
     // apply() installs a hook so flag changes can (un)mount the caption menu.
@@ -166,6 +237,88 @@ window.__ModuleLoader__.load({
     const GEN_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>';
 
     const OPT_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h0"/><path d="M17.8 6.2L19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2L11 5"/></svg>';
+
+    const SC_GLYPH = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>';
+    const SC_PUSH_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>';
+    const SC_REFRESH_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
+    const SC_CLOSE_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    const SC_CHEVRON_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+    const SC_PLUS_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+    const SC_SPARK_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>';
+
+    const SC_CSS = [
+      // entry icon in the sidebar footer (next to the settings entry)
+      '.dsh-tools-scEntry{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:default;}',
+      '.dsh-tools-scEntry:hover,.dsh-tools-scEntry:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary);outline:none;}',
+      '.dsh-tools-scEntry[aria-pressed="true"]{color:var(--dsw-alias-brand-primary,#3b82f6);}',
+      // right-side drawer (shell.overlay slot)
+      '.dsh-tools-scDrawer{position:fixed;top:0;right:0;bottom:0;width:min(440px,92vw);display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-overlay));border-left:1px solid var(--dsw-alias-border-l1);box-shadow:-12px 0 32px rgba(0,0,0,.22);z-index:1150;font-size:13.5px;color:var(--dsw-alias-label-primary);transform:translateX(100%);transition:transform 200ms cubic-bezier(.4,0,.2,1);visibility:hidden;}',
+      '.dsh-tools-scDrawer.is-open{transform:translateX(0);visibility:visible;}',
+      '.dsh-tools-scHeader{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;}',
+      '.dsh-tools-scHeaderTitle{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;flex:1;min-width:0;}',
+      '.dsh-tools-scIconBtn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:default;flex:none;}',
+      '.dsh-tools-scIconBtn:hover:not(:disabled),.dsh-tools-scIconBtn:focus-visible:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary);outline:none;}',
+      '.dsh-tools-scIconBtn:disabled{opacity:.55;}',
+      '.dsh-tools-scBody{flex:1;overflow-y:auto;padding:8px 8px 16px;}',
+      '.dsh-tools-scState{display:flex;flex-direction:column;gap:8px;padding:18px 10px;color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-scGroup{margin:4px 0 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;overflow:hidden;background:var(--dsw-alias-bg-layer-2,transparent);}',
+      '.dsh-tools-scGroupHead{display:flex;align-items:center;gap:7px;padding:7px 10px;background:transparent;}',
+      '.dsh-tools-scGroupHeadMain{flex:1;min-width:0;display:flex;align-items:center;gap:7px;background:transparent;border:0;padding:2px 4px;border-radius:5px;color:inherit;font:inherit;text-align:left;cursor:default;}',
+      '.dsh-tools-scGroupHeadMain:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}',
+      '.dsh-tools-scRepoName{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.dsh-tools-scBranch{font-size:11.5px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));border-radius:5px;padding:1px 6px;white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis;flex:none;}',
+      '.dsh-tools-scCount{font-size:11.5px;color:var(--dsw-alias-label-secondary);flex:none;}',
+      '.dsh-tools-scChev{display:inline-flex;flex:none;color:var(--dsw-alias-label-secondary);transition:transform 150ms ease;}',
+      '.dsh-tools-scChev.is-open{transform:rotate(180deg);}',
+      '.dsh-tools-scMini{display:inline-flex;align-items:center;height:22px;padding:0 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11.5px;cursor:default;flex:none;white-space:nowrap;}',
+      '.dsh-tools-scMini:hover:not(:disabled){color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-scMini:disabled{opacity:.55;}',
+      '.dsh-tools-scFiles{display:flex;flex-direction:column;}',
+      '.dsh-tools-scFile{display:flex;align-items:center;gap:7px;padding:3px 10px 3px 12px;cursor:default;}',
+      '.dsh-tools-scFile:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}',
+      '.dsh-tools-scFile input[type=checkbox]{accent-color:var(--dsw-alias-brand-primary,#3b82f6);width:14px;height:14px;flex:none;margin:0;}',
+      '.dsh-tools-scFileMain{flex:1;min-width:0;background:transparent;border:0;padding:2px 3px;border-radius:4px;color:inherit;font:inherit;text-align:left;cursor:default;overflow:hidden;}',
+      '.dsh-tools-scFileMain:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));}',
+      '.dsh-tools-scFileName{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.dsh-tools-scFileDir{display:block;font-size:11px;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.dsh-tools-scBadge{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:4px;font-size:10.5px;font-weight:700;flex:none;}',
+      '.dsh-tools-scBadge.is-A{color:var(--dsw-alias-state-success-primary,#3fb950);background:rgba(63,185,80,.14);}',
+      '.dsh-tools-scBadge.is-M{color:var(--dsw-alias-brand-primary,#3b82f6);background:rgba(59,130,246,.14);}',
+      '.dsh-tools-scBadge.is-D{color:var(--dsw-alias-state-error-primary,#f85149);background:rgba(248,81,73,.14);}',
+      '.dsh-tools-scBadge.is-R{color:var(--dsw-alias-state-warn-primary,#d29922);background:rgba(210,153,34,.14);}',
+      '.dsh-tools-scFile.is-selected{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.10));}',
+      '.dsh-tools-scDiff{margin:0;padding:6px 10px;font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:11.5px;line-height:1.55;background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.18));overflow-x:auto;white-space:pre;border-top:1px solid var(--dsw-alias-border-l1);max-height:300px;overflow-y:auto;}',
+      '.dsh-tools-scDiff .dsh-tools-dl{display:block;}',
+      '.dsh-tools-scDiff .dsh-tools-dl.is-add{color:var(--dsw-alias-state-success-primary,#3fb950);}',
+      '.dsh-tools-scDiff .dsh-tools-dl.is-del{color:var(--dsw-alias-state-error-primary,#f85149);}',
+      '.dsh-tools-scDiff .dsh-tools-dl.is-hunk{color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-scCommitBar{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1);}',
+      '.dsh-tools-scMsgRow{display:flex;gap:6px;align-items:flex-start;}',
+      '.dsh-tools-scMsg{flex:1;min-width:0;resize:vertical;min-height:34px;max-height:110px;padding:6px 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2,transparent);color:inherit;font:inherit;font-size:12.5px;}',
+      '.dsh-tools-scMsg:focus-visible{outline:none;border-color:var(--dsw-alias-brand-primary,#3b82f6);}',
+      '.dsh-tools-scActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}',
+      '.dsh-tools-scBtn{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 11px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:inherit;font-size:12.5px;cursor:default;}',
+      '.dsh-tools-scBtn:hover:not(:disabled){border-color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-scBtn:disabled{opacity:.55;}',
+      '.dsh-tools-scBtn.is-primary{background:var(--dsw-alias-brand-primary,#3b82f6);border-color:transparent;color:#fff;}',
+      '.dsh-tools-scBtn.is-primary:disabled{opacity:.6;}',
+      '.dsh-tools-scNote{font-size:11.5px;color:var(--dsw-alias-label-secondary);min-width:0;word-break:break-word;}',
+      '.dsh-tools-scNote.is-error{color:var(--dsw-alias-state-error-primary);}',
+      '.dsh-tools-scNote.is-ok{color:var(--dsw-alias-state-success-primary,#3fb950);}',
+      '.dsh-tools-scFootHint{padding:2px 12px 0;font-size:11px;color:var(--dsw-alias-label-secondary);flex:none;}',
+      '.dsh-tools-scRootRow{display:flex;align-items:center;gap:8px;padding:2px 0;}',
+      '.dsh-tools-scRootPath{flex:1;min-width:0;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left;}',
+      '.dsh-tools-scRootRemove{display:inline-flex;align-items:center;height:22px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11.5px;cursor:default;flex:none;}',
+      '.dsh-tools-scRootRemove:hover{color:var(--dsw-alias-state-error-primary);border-color:currentColor;}',
+    ].join('\n');
+
+    function ensureScStyles() {
+      if (document.getElementById('dsh-tools-sc-styles') !== null) return;
+      const style = document.createElement('style');
+      style.id = 'dsh-tools-sc-styles';
+      style.textContent = SC_CSS;
+      document.head.append(style);
+    }
 
     function ensureGenStyles() {
       if (document.getElementById('dsh-tools-gen-styles') !== null) return;
@@ -542,7 +695,12 @@ window.__ModuleLoader__.load({
             ['generate', 'fGenerate'],
             ['optimize', 'fOptimize'],
             ['history', 'fHistory'],
+            ['sc', 'fSc'],
           ];
+
+          // Native directory picker (Client uiWorkspace service), when present.
+          let pickDirectory = null;
+          try { pickDirectory = ctx.get('uiWorkspace')?.pickDirectory ?? null; } catch { pickDirectory = null; }
 
           const ToolsPanel = () => {
             const [flags, setFlags] = React.useState({ ...featureFlags });
@@ -553,6 +711,8 @@ window.__ModuleLoader__.load({
             const [modelsError, setModelsError] = React.useState('');
             const [saveState, setSaveState] = React.useState('idle'); // idle | busy | saved | error
             const [saveNote, setSaveNote] = React.useState('');
+            const [roots, setRoots] = React.useState(null);           // null = loading
+            const [rootError, setRootError] = React.useState('');
 
             React.useEffect(() => {
               let alive = true;
@@ -569,6 +729,19 @@ window.__ModuleLoader__.load({
                   if (alive) setModelsError(error?.message ?? String(error));
                 }
               })();
+              (async () => {
+                try {
+                  const result = await call('settings.get', {});
+                  if (!alive) return;
+                  if (result?.ok === true && Array.isArray(result.value?.settings?.sc?.roots)) {
+                    setRoots(result.value.settings.sc.roots.slice());
+                  } else {
+                    setRoots([]);
+                  }
+                } catch (error) {
+                  if (alive) { setRoots([]); setRootError(error?.message ?? String(error)); }
+                }
+              })();
               return () => { alive = false; };
             }, []);
 
@@ -578,12 +751,37 @@ window.__ModuleLoader__.load({
               return Array.isArray(group?.models) ? group.models : [];
             }, [providers, provider]);
 
+            const addRoot = async () => {
+              setRootError('');
+              try {
+                if (typeof pickDirectory !== 'function') {
+                  setRootError(t('scAddRoot') + ': pickDirectory unavailable');
+                  return;
+                }
+                const picked = await pickDirectory();
+                if (typeof picked === 'string' && picked !== '') {
+                  setRoots((current) => {
+                    const list = current ?? [];
+                    const lower = new Set(list.map((r) => r.toLowerCase()));
+                    return lower.has(picked.toLowerCase()) ? list : [...list, picked];
+                  });
+                }
+              } catch (error) {
+                setRootError(error?.message ?? String(error));
+              }
+            };
+
+            const removeRoot = (path) => {
+              setRoots((current) => (current ?? []).filter((r) => r !== path));
+            };
+
             const onSave = async () => {
               setSaveState('busy');
               setSaveNote(t('saving'));
               const payload = {
                 features: Object.fromEntries(TOGGLES.map(([key]) => [key, flags[key] === true])),
                 model: custom && provider !== '' && model !== '' ? { provider, model } : { provider: '', model: '' },
+                sc: { roots: roots ?? [] },
               };
               try {
                 const result = await call('settings.set', payload);
@@ -654,6 +852,24 @@ window.__ModuleLoader__.load({
                 providers === null ? React.createElement('p', null, modelsError !== '' ? modelsError : t('modelsLoading'))
                   : (modelsError !== '' ? React.createElement('p', { className: 'dsh-tools-note is-error' }, modelsError)
                     : (providers.every((p) => !p.models?.length) ? React.createElement('p', null, t('modelsEmpty')) : null))),
+              React.createElement('section', null,
+                React.createElement('h4', null, t('scRootsTitle')),
+                React.createElement('p', null, t('scRootsIntro')),
+                ...(roots ?? []).map((root) => React.createElement('div', { className: 'dsh-tools-scRootRow', key: root },
+                  React.createElement('span', { className: 'dsh-tools-scRootPath', title: root }, root),
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scRootRemove',
+                    onClick: () => removeRoot(root),
+                  }, t('scRemoveRoot')))),
+                React.createElement('button', {
+                  type: 'button',
+                  className: 'dsh-tools-scBtn',
+                  onClick: () => { void addRoot(); },
+                },
+                React.createElement('span', { dangerouslySetInnerHTML: { __html: SC_PLUS_GLYPH } }),
+                React.createElement('span', null, t('scAddRoot'))),
+                rootError !== '' ? React.createElement('p', { className: 'dsh-tools-note is-error' }, rootError) : null),
               React.createElement('div', { className: 'dsh-tools-panelFooter' },
                 React.createElement('button', {
                   type: 'button',
@@ -675,6 +891,412 @@ window.__ModuleLoader__.load({
           });
           if (typeof ctx.effect === 'function') {
             return ctx.effect(effectBody, 'dsh-tools: settings panel');
+          }
+          return effectBody();
+        };
+
+        // ---- source control (sidebar entry + shell.overlay drawer) ----
+        // A tiny plain store carries the open/closed state so the sidebar
+        // entry (aria-pressed) and the drawer stay in sync across slots.
+        const registerScUi = () => {
+          if (React === null || typeof ctx?.slots?.register !== 'function'
+            || typeof ctx.slots.inject !== 'function') {
+            return () => {};
+          }
+          ensureScStyles();
+
+          const store = {
+            open: false,
+            listeners: new Set(),
+            setOpen(value) { if (store.open !== value) { store.open = value; store.emit(); } },
+            toggle() { store.open = !store.open; store.emit(); },
+            emit() { for (const listener of [...store.listeners]) { try { listener(); } catch { /* listener gone */ } } },
+            subscribe(listener) { store.listeners.add(listener); return () => { store.listeners.delete(listener); }; },
+            snapshot() { return store.open; },
+          };
+          const useOpen = () => (typeof React.useSyncExternalStore === 'function'
+            ? React.useSyncExternalStore(store.subscribe, store.snapshot)
+            : (() => {
+              // React 17 fallback: local state mirrors the store.
+              const [value, setValue] = React.useState(store.open);
+              React.useEffect(() => store.subscribe(() => setValue(store.open)), []);
+              return value;
+            })());
+
+          const fmtError = (error, fallback) => {
+            if (typeof error?.message === 'string' && error.message !== '') {
+              return typeof error?.code === 'string' && error.code !== '' ? `[${error.code}] ${error.message}` : error.message;
+            }
+            return fallback ?? '';
+          };
+          const icon = (glyph, className) => React.createElement('span', {
+            className,
+            dangerouslySetInnerHTML: { __html: glyph },
+          });
+          const STATUS_DICT = { A: 'stA', M: 'stM', D: 'stD', R: 'stR' };
+
+          const ScEntryButton = () => {
+            const open = useOpen();
+            if (!featureFlags.sc) return null;
+            return React.createElement('button', {
+              type: 'button',
+              className: 'dsh-tools-scEntry',
+              title: t('scEntryTitle'),
+              'aria-label': t('sc'),
+              'aria-pressed': open ? 'true' : 'false',
+              onClick: () => store.toggle(),
+            }, icon(SC_GLYPH));
+          };
+
+          const DiffView = ({ text }) => React.createElement('pre', { className: 'dsh-tools-scDiff' },
+            String(text ?? '').split('\n').map((line, index) => {
+              let cls = 'dsh-tools-dl';
+              if (line.startsWith('+')) cls += ' is-add';
+              else if (line.startsWith('-')) cls += ' is-del';
+              else if (line.startsWith('@@')) cls += ' is-hunk';
+              return React.createElement('span', { className: cls, key: index }, line);
+            }));
+
+          const ScPanel = () => {
+            const open = useOpen();
+            const [repos, setRepos] = React.useState(null);      // null = loading
+            const [reposError, setReposError] = React.useState('');
+            const [statusMap, setStatusMap] = React.useState({}); // repo.id -> {branch,files,truncated,error}
+            const [collapsed, setCollapsed] = React.useState({});
+            const [selected, setSelected] = React.useState({});   // repo.id -> Set<path>
+            const [diffKey, setDiffKey] = React.useState(null);   // `${id}\u0001${path}`
+            const [diffState, setDiffState] = React.useState({});
+            const [msgMap, setMsgMap] = React.useState({});
+            const [busy, setBusy] = React.useState({});           // repo.id -> {op,error,note}
+
+            const loadAll = React.useCallback(async () => {
+              setRepos(null);
+              setReposError('');
+              let result;
+              try {
+                result = await call('sc.repos', {});
+              } catch (error) {
+                setRepos([]);
+                setReposError(error?.message ?? String(error));
+                return;
+              }
+              if (result?.ok !== true) {
+                setRepos([]);
+                setReposError(fmtError(result?.error, t('scFailed')));
+                return;
+              }
+              const list = Array.isArray(result.value?.repos) ? result.value.repos : [];
+              setRepos(list);
+              const next = {};
+              await Promise.all(list.map(async (repo) => {
+                next[repo.id] = { branch: '', files: [], truncated: false, loading: true };
+                try {
+                  const r = await call('sc.status', { repo: repo.path });
+                  next[repo.id] = r?.ok === true
+                    ? {
+                      branch: typeof r.value?.branch === 'string' ? r.value.branch : '',
+                      files: Array.isArray(r.value?.files) ? r.value.files : [],
+                      truncated: r.value?.truncated === true,
+                    }
+                    : { branch: '', files: [], truncated: false, error: fmtError(r?.error, t('scFailed')) };
+                } catch (error) {
+                  next[repo.id] = { branch: '', files: [], truncated: false, error: error?.message ?? String(error) };
+                }
+              }));
+              setStatusMap(next);
+            }, []);
+
+            React.useEffect(() => {
+              if (open && repos === null) void loadAll();
+            }, [open, repos, loadAll]);
+
+            // Escape closes the drawer (capture phase, window level).
+            React.useEffect(() => {
+              if (!open) return undefined;
+              const onKeyDown = (event) => { if (event.key === 'Escape') store.setOpen(false); };
+              window.addEventListener('keydown', onKeyDown, true);
+              return () => window.removeEventListener('keydown', onKeyDown, true);
+            }, [open]);
+
+            const refreshRepo = async (repo) => {
+              try {
+                const r = await call('sc.status', { repo: repo.path });
+                setStatusMap((current) => ({
+                  ...current,
+                  [repo.id]: r?.ok === true
+                    ? {
+                      branch: typeof r.value?.branch === 'string' ? r.value.branch : '',
+                      files: Array.isArray(r.value?.files) ? r.value.files : [],
+                      truncated: r.value?.truncated === true,
+                    }
+                    : { branch: '', files: [], truncated: false, error: fmtError(r?.error, t('scFailed')) },
+                }));
+              } catch (error) {
+                setStatusMap((current) => ({
+                  ...current,
+                  [repo.id]: { branch: '', files: [], truncated: false, error: error?.message ?? String(error) },
+                }));
+              }
+            };
+
+            const selectedSet = (id) => selected[id] ?? new Set();
+            const toggleFile = (id, path) => setSelected((current) => {
+              const set = new Set(current[id] ?? []);
+              if (set.has(path)) set.delete(path); else set.add(path);
+              return { ...current, [id]: set };
+            });
+            const selectAll = (id, files) => setSelected((current) => ({
+              ...current, [id]: new Set(files.map((file) => file.path)),
+            }));
+            const clearSelection = (id) => setSelected((current) => ({ ...current, [id]: new Set() }));
+
+            const setBusyState = (id, patch) => setBusy((current) => ({
+              ...current, [id]: { op: null, error: '', note: '', ...(current[id] ?? {}), ...patch },
+            }));
+
+            const toggleDiff = async (repo, file) => {
+              const key = `${repo.id}\u0001${file.path}`;
+              if (diffKey === key) { setDiffKey(null); return; }
+              setDiffKey(key);
+              if (diffState[key] === undefined) {
+                setDiffState((current) => ({ ...current, [key]: { loading: true } }));
+                try {
+                  const r = await call('sc.diff', {
+                    repo: repo.path,
+                    file: file.path,
+                    untracked: file.status === 'A' && file.staged !== true,
+                  });
+                  setDiffState((current) => ({
+                    ...current,
+                    [key]: r?.ok === true ? { text: typeof r.value?.diff === 'string' ? r.value.diff : '' }
+                      : { error: fmtError(r?.error, t('scDiffFailed')) },
+                  }));
+                } catch (error) {
+                  setDiffState((current) => ({ ...current, [key]: { error: error?.message ?? String(error) } }));
+                }
+              }
+            };
+
+            const genMessage = async (repo) => {
+              if (busy[repo.id]?.op) return;
+              const files = [...selectedSet(repo.id)];
+              if (files.length === 0) { setBusyState(repo.id, { error: t('scNoFiles') }); return; }
+              setBusyState(repo.id, { op: 'msg', error: '', note: t('scGenMsging') });
+              try {
+                const r = await call('sc.commitMessage', { repo: repo.path, files, lang: lang === 'zh' ? 'zh' : 'en' });
+                if (r?.ok === true && typeof r.value?.draft === 'string' && r.value.draft !== '') {
+                  setMsgMap((current) => ({ ...current, [repo.id]: r.value.draft }));
+                  setBusyState(repo.id, { op: null, note: '' });
+                } else {
+                  setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
+                }
+              } catch (error) {
+                setBusyState(repo.id, { op: null, error: error?.message ?? String(error) });
+              }
+            };
+
+            const doCommit = async (repo) => {
+              if (busy[repo.id]?.op) return;
+              const files = [...selectedSet(repo.id)];
+              const message = (msgMap[repo.id] ?? '').trim();
+              if (files.length === 0) { setBusyState(repo.id, { error: t('scNoFiles') }); return; }
+              if (message === '') { setBusyState(repo.id, { error: t('scNoMsg') }); return; }
+              setBusyState(repo.id, { op: 'commit', error: '', note: t('scCommitting') });
+              try {
+                const r = await call('sc.commit', { repo: repo.path, files, message });
+                if (r?.ok === true) {
+                  const hash = typeof r.value?.commit === 'string' ? r.value.commit : '';
+                  setBusyState(repo.id, { op: null, note: `${t('scCommitted')} ${hash}`.trim() });
+                  clearSelection(repo.id);
+                  setDiffKey(null);
+                  void refreshRepo(repo);
+                } else {
+                  setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
+                }
+              } catch (error) {
+                setBusyState(repo.id, { op: null, error: error?.message ?? String(error) });
+              }
+            };
+
+            const doPush = async (repo) => {
+              if (busy[repo.id]?.op) return;
+              setBusyState(repo.id, { op: 'push', error: '', note: t('scPushing') });
+              try {
+                const r = await call('sc.push', { repo: repo.path });
+                if (r?.ok === true) {
+                  setBusyState(repo.id, { op: null, note: t('scPushed') });
+                  void refreshRepo(repo);
+                } else {
+                  setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
+                }
+              } catch (error) {
+                setBusyState(repo.id, { op: null, error: error?.message ?? String(error) });
+              }
+            };
+
+            if (!featureFlags.sc) return null;
+
+            const repoGroups = (repos ?? []).map((repo) => {
+              const st = statusMap[repo.id] ?? { branch: '', files: [], truncated: false, loading: true };
+              const isCollapsed = collapsed[repo.id] === true;
+              const sel = selectedSet(repo.id);
+              const busyState = busy[repo.id] ?? { op: null, error: '', note: '' };
+              const anyBusy = Boolean(busyState.op);
+              return React.createElement('div', { className: 'dsh-tools-scGroup', key: repo.id },
+                React.createElement('div', { className: 'dsh-tools-scGroupHead' },
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scGroupHeadMain',
+                    onClick: () => setCollapsed((current) => ({ ...current, [repo.id]: !isCollapsed })),
+                  },
+                  icon(SC_CHEVRON_GLYPH, `dsh-tools-scChev${isCollapsed ? '' : ' is-open'}`),
+                  React.createElement('span', { className: 'dsh-tools-scRepoName', title: repo.path }, repo.name),
+                  st.branch !== '' ? React.createElement('span', { className: 'dsh-tools-scBranch' }, st.branch) : null,
+                  React.createElement('span', { className: 'dsh-tools-scCount' }, String(st.files.length))),
+                  st.files.length > 0 ? React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scMini',
+                    onClick: () => selectAll(repo.id, st.files),
+                  }, t('scSelectAll')) : null,
+                  sel.size > 0 ? React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scMini',
+                    onClick: () => clearSelection(repo.id),
+                  }, t('scClear')) : null,
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scIconBtn',
+                    title: t('scPush'),
+                    disabled: anyBusy,
+                    onClick: () => { void doPush(repo); },
+                  }, icon(SC_PUSH_GLYPH))),
+                !isCollapsed ? React.createElement('div', { className: 'dsh-tools-scFiles' },
+                  st.error !== undefined ? React.createElement('div', { className: 'dsh-tools-scNote is-error', style: { padding: '6px 12px' } }, st.error) : null,
+                  st.error === undefined && st.loading ? React.createElement('div', { className: 'dsh-tools-scNote', style: { padding: '6px 12px' } }, '…') : null,
+                  st.error === undefined && !st.loading && st.files.length === 0
+                    ? React.createElement('div', { className: 'dsh-tools-scNote', style: { padding: '6px 12px' } }, t('scClean')) : null,
+                  st.error === undefined && !st.loading ? st.files.map((file) => {
+                    const key = `${repo.id}\u0001${file.path}`;
+                    const isSel = sel.has(file.path);
+                    const slash = file.path.lastIndexOf('/');
+                    const dir = slash >= 0 ? file.path.slice(0, slash + 1) : '';
+                    const name = slash >= 0 ? file.path.slice(slash + 1) : file.path;
+                    const diffOpen = diffKey === key;
+                    const ds = diffState[key];
+                    return React.createElement(React.Fragment, { key: key },
+                      React.createElement('div', { className: `dsh-tools-scFile${isSel ? ' is-selected' : ''}` },
+                        React.createElement('input', {
+                          type: 'checkbox',
+                          checked: isSel,
+                          title: t('scSelectHint'),
+                          onChange: () => toggleFile(repo.id, file.path),
+                        }),
+                        React.createElement('button', {
+                          type: 'button',
+                          className: 'dsh-tools-scFileMain',
+                          title: file.path,
+                          onClick: () => { void toggleDiff(repo, file); },
+                        },
+                        React.createElement('span', { className: 'dsh-tools-scFileName' }, name),
+                        dir !== '' ? React.createElement('span', { className: 'dsh-tools-scFileDir' }, dir) : null),
+                        React.createElement('span', {
+                          className: `dsh-tools-scBadge is-${file.status}`,
+                          title: t(STATUS_DICT[file.status] ?? 'stM'),
+                        }, file.status)),
+                      diffOpen ? React.createElement('div', null,
+                        ds === undefined || ds.loading ? React.createElement('div', { className: 'dsh-tools-scNote', style: { padding: '6px 12px' } }, '…')
+                          : (ds.error !== undefined ? React.createElement('div', { className: 'dsh-tools-scNote is-error', style: { padding: '6px 12px' } }, ds.error)
+                            : React.createElement(DiffView, { text: ds.text }))) : null);
+                  }) : null,
+                  st.truncated ? React.createElement('div', { className: 'dsh-tools-scNote', style: { padding: '4px 12px' } }, t('scTruncated')) : null,
+                  (busyState.error !== '' && busyState.error !== undefined) || (busyState.note !== '' && busyState.note !== undefined)
+                    ? React.createElement('div', {
+                      className: `dsh-tools-scNote${busyState.error ? ' is-error' : ' is-ok'}`,
+                      style: { padding: '4px 12px' },
+                    }, busyState.error || busyState.note) : null,
+                  sel.size > 0 ? React.createElement('div', { className: 'dsh-tools-scCommitBar' },
+                    React.createElement('div', { className: 'dsh-tools-scMsgRow' },
+                      React.createElement('textarea', {
+                        className: 'dsh-tools-scMsg',
+                        rows: 2,
+                        value: msgMap[repo.id] ?? '',
+                        placeholder: t('scMessagePlaceholder'),
+                        onChange: (event) => setMsgMap((current) => ({ ...current, [repo.id]: event.target.value })),
+                      })),
+                    React.createElement('div', { className: 'dsh-tools-scActions' },
+                      React.createElement('button', {
+                        type: 'button',
+                        className: 'dsh-tools-scBtn',
+                        disabled: anyBusy,
+                        onClick: () => { void genMessage(repo); },
+                      }, icon(SC_SPARK_GLYPH), React.createElement('span', null, t('scGenMsg'))),
+                      React.createElement('button', {
+                        type: 'button',
+                        className: 'dsh-tools-scBtn is-primary',
+                        disabled: anyBusy,
+                        onClick: () => { void doCommit(repo); },
+                      }, t('scCommit')))) : null) : null);
+            });
+
+            return React.createElement('div', {
+              className: `dsh-tools-scDrawer${open ? ' is-open' : ''}`,
+              role: 'complementary',
+              'aria-label': t('sc'),
+            },
+            React.createElement('div', { className: 'dsh-tools-scHeader' },
+              React.createElement('div', { className: 'dsh-tools-scHeaderTitle' },
+                icon(SC_GLYPH),
+                React.createElement('span', null, t('sc'))),
+              React.createElement('button', {
+                type: 'button',
+                className: 'dsh-tools-scIconBtn',
+                title: t('scRefresh'),
+                onClick: () => { void loadAll(); },
+              }, icon(SC_REFRESH_GLYPH)),
+              React.createElement('button', {
+                type: 'button',
+                className: 'dsh-tools-scIconBtn',
+                title: t('scClose'),
+                onClick: () => store.setOpen(false),
+              }, icon(SC_CLOSE_GLYPH))),
+            React.createElement('div', { className: 'dsh-tools-scBody' },
+              repos === null ? React.createElement('div', { className: 'dsh-tools-scState' }, t('scLoading')) : null,
+              repos !== null && reposError !== '' ? React.createElement('div', { className: 'dsh-tools-scState' },
+                React.createElement('span', { className: 'dsh-tools-scNote is-error' }, reposError),
+                React.createElement('div', null,
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scBtn',
+                    onClick: () => { void loadAll(); },
+                  }, t('scRefresh')))) : null,
+              repos !== null && reposError === '' && repos.length === 0 ? React.createElement('div', { className: 'dsh-tools-scState' },
+                React.createElement('span', { className: 'dsh-tools-scNote' }, t('scEmpty')),
+                React.createElement('span', { className: 'dsh-tools-scNote' }, t('scEmptyHint'))) : null,
+              repos !== null && reposError === '' ? repoGroups : null));
+          };
+
+          const effectBody = () => {
+            const disposers = [];
+            disposers.push(ctx.slots.inject('sidebar.footer.action', () => {
+              const unregister = ctx.slots.register(
+                { name: 'sidebar.footer.action', id: 'dsh-tools-sc', order: 10, label: () => t('sc') },
+                () => React.createElement(ScEntryButton),
+              );
+              return unregister;
+            }));
+            disposers.push(ctx.slots.inject('shell.overlay', () => {
+              const unregister = ctx.slots.register(
+                { name: 'shell.overlay', id: 'dsh-tools-sc-panel', order: 20 },
+                () => React.createElement(ScPanel),
+              );
+              return unregister;
+            }));
+            return () => {
+              for (const dispose of disposers) { try { dispose(); } catch { /* already gone */ } }
+            };
+          };
+          if (typeof ctx.effect === 'function') {
+            return ctx.effect(effectBody, 'dsh-tools: source control');
           }
           return effectBody();
         };
@@ -902,6 +1524,13 @@ window.__ModuleLoader__.load({
           keep(registerSettingsPanel());
         } catch (error) {
           console.warn('[dsh-tools] settings panel unavailable:', error);
+        }
+
+        // Source control entry + drawer.
+        try {
+          keep(registerScUi());
+        } catch (error) {
+          console.warn('[dsh-tools] source control unavailable:', error);
         }
 
         // Terminal-style ↑/↓ input history (plain DOM, always on).

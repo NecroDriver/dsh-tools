@@ -1,12 +1,34 @@
-# dsh-tools 交付报告（2026-11-19，v0.4.0）
+# dsh-tools 交付报告（2026-11-23，v0.6.0）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.4.0 安装于 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
-- **按钮重启已端到端验证成功**（v0.2.3，14:05 实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
+- 插件 `dsh-tools` v0.6.0 安装于 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
+- **按钮重启已端到端验证成功**（v0.2.3 起多次实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
-- v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer；19:11 部署后 Web Host 确认 `llm service captured`，用户验证中。
-- v0.4.0：**输入历史 ↑/↓**（终端式）——光标在输入框时 ↑ 载入上一条**用户已发送消息**（DOM `[data-chat-flow-kind="user"]` 实时读取），↓ 向最新回走，越过最新恢复原草稿；仅输入框空/光标在文本最前时进入历史模式（不打断多行编辑的光标移动），其他任意键交还正常编辑。纯客户端 keydown 捕获实现。
+- v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer。
+- v0.4.0：**输入历史 ↑/↓**（终端式）——光标在输入框时 ↑ 载入上一条**用户已发送消息**（DOM `[data-chat-flow-kind="user"]` 实时读取），↓ 向最新回走，越过最新恢复原草稿。v0.4.3：历史文本清洗（时间戳/隐藏重复块折叠）。
+- v0.5.0：**输入栏「优化」按钮**（提示词改写，composer 生成/优化期间锁定）+ **系统设置 → 工具设置**（每功能开关、自定义模型 provider+model、模型目录来自 `models.list`）。
+- v0.6.0：**侧边栏「资源控制」**——类 VSCode 面板（见下节）。
+
+## v0.6.0（2026-11-23）
+
+### 资源控制（Source Control）
+
+- 入口：`sidebar.footer.action` slot 图标按钮（aria-pressed，点击开/收）；面板：`shell.overlay` slot 右侧抽屉（min(440px,92vw)，200ms 滑入，Esc/再点收起，`useSyncExternalStore` 外部 store）。
+- Host（`index.js`）7 个方法：`sc.repos`（扫描根=workspaceRegistry.list()+settings.sc.roots，BFS 3 层，SKIP 目录不下钻，遇 `.git` 即收）、`sc.status`（`status --porcelain=v1 -z` 自研解析：XY→A/M/D/R，R/C 双记录=当前路径+orig，`??`→A 未暂存，`!!` 忽略；分支 `rev-parse --abbrev-ref HEAD`）、`sc.diff`（tracked=`diff HEAD --`，untracked=合成全 `+` 新文件 diff——`ls-files` 判 tracked 抗陈旧；cap 80k）、`sc.log`（30 条 subjects）、`sc.commitMessage`（最近 20 条 subjects 作风格参考 + 选中文件逐个 diff（单文件 6k/总量 20k 预算）→ `runAssist('commit')`）、`sc.commit`（message 1–500 字符校验 → resolveSelection 以**新鲜 status** 精确匹配 → `add -A -- <paths>` + `commit -m -- <paths>` pathspec 限定部分提交，未选改动不动 → 短哈希）、`sc.push`（120s 超时）。
+- 安全：`requireScRepo`（绝对路径+目录+.git）；`validateScFile`（拒 NUL/`-`开头/绝对路径/`..`·`./`；resolve 防逃逸）；commit 时文件必须是当前工作副本变更（防 TOCTOU）。
+- Client（`client.js`）：`ScPanel` 按仓库分组（组头=折叠 chevron+仓库名+分支 chip+计数+全选/清空+推送），文件行=checkbox+状态徽标（A 绿/M 蓝/D 红/R 黄，字母+颜色双编码）+点击展开 diff（+/-/@@ 染色）；勾选后组脚 commit bar（textarea 可编辑 + AI 生成 + 提交）；busy/note/error 独立行（不随选择清空闪没）；`featureFlags.sc` 门控。
+- 设置扩展：`settings.section` 面板加「资源控制扫描根目录」编辑器（`uiWorkspace.pickDirectory()` 原生目录选择 + 逐个移除），随 settings.set 持久化 `sc.roots`（cap 32）。
+- 测试：**test-sc.mjs 15 项全过**（真 git 临时仓：扫描跳 node_modules/status M/A/D/R+orig/parsePorcelain 单测含 `!!` 过滤/diff tracked+synthetic+穿越拒绝+缺失文件优雅回退/部分提交隔离验证/sc.log/commitMessage 提示词含历史风格+选中 diff+路由模型/push 无远端 git-error）；**test-client-render.cjs 22 项全过**（VM+MiniReact 渲染：入口/抽屉/分组/徽标/diff/勾选/commit bar/AI 生成/提交只含选中/推送/Esc）；smoke 24 项、two-stage 回归过。
+- 踩坑记录：git porcelain v1 `-z` 重命名记录顺序=**当前路径在 XY 记录内、orig 是下一个 NUL 记录**（probe 实证）；未暂存的 rename 在 status 中不配对（` D`+`??`）——配对只发生在 index；渲染测试 effects 闭包陈旧→step() 必须 render→runEffects→render。
+
+## v0.5.0（2026-11-20）
+
+- **优化按钮**：`conversation.input.right` 第二个注册（order:11，魔法棒图标）；读 composer 文本 → Host `optimize`（OPTIMIZE_SYSTEMS：明确目标/补上下文约束/可分点/不改意图语言选型/保留标识符；maxTokens 900）→ 结果写回输入框。生成/优化共享 `assistBusy` 互斥，期间 composer 锁定（`data-dsh-tools-locked` + contenteditable=false），完成/失败解锁。
+- **工具设置面板**：`settings.section` slot（order:23）。四功能开关（含新 sc 前为三项）；模型自定义=跟随默认 / provider+model 级联选择（`models.list` 归一目录）；持久化 `<DSH_HOME>/integrations/dsh-tools/settings.json`（原子写；DSH_TOOLS_HOME 测试逃生门）；半覆盖（只填 provider）拒绝 bad-request。模型覆盖用于 suggest/optimize/commitMessage 三处（`resolveAssistRoute`：覆盖→`agentDefaultModel.currentSelection()`）。
+- 测试：smoke 24 项全过（新增 8 项：settings 默认/半覆盖拒/落盘/optimize 覆盖模型/空输入/models.list 归一）。
+- 事故记录：PS 5.1 `Set-Content -Encoding UTF8` 给 package.json 写入 BOM → 安装时 JSON 解析炸；修复=[System.IO.File]::WriteAllText+UTF8Encoding($false)，一律用 .NET API 写文件。.git 再次被掏空（复发问题），既定流程恢复（init→fetch→reset --soft→**git add -A**→commit→push）。
+
 
 ## v0.4.0（2026-11-19 19:3x）
 
