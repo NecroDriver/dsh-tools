@@ -95,6 +95,23 @@ check('sc.repos finds alpha + nested beta, skips node_modules',
   r.ok === true && repoNames.join(',') === 'alpha,beta',
   `repos=${JSON.stringify(repoNames)} roots=${JSON.stringify(r.value?.roots)}`);
 
+// --- sc.repos with client-hinted roots: hint works even with no settings roots ---
+const hintRoot = mkdtempSync(join(tmpdir(), 'dsh-tools-sc-hint-'));
+const hintRepo = join(hintRoot, 'hinted');
+initRepo(hintRepo);
+git(hintRepo, 'commit', '--allow-empty', '-m', 'hint: empty');
+await post('settings.set', { sc: { roots: [] } });
+r = await post('sc.repos', { roots: [hintRoot] });
+const hintNames = (r.value?.repos ?? []).map((entry) => entry.name).sort();
+check('sc.repos uses client-hinted roots without settings',
+  r.ok === true && hintNames.join(',') === 'hinted',
+  `repos=${JSON.stringify(hintNames)} roots=${JSON.stringify(r.value?.roots)}`);
+r = await post('sc.repos', { roots: [hintRoot, 'relative/path', 42, null] });
+check('sc.repos ignores malformed hints',
+  r.ok === true && (r.value?.repos ?? []).map((entry) => entry.name).join(',') === 'hinted',
+  `repos=${JSON.stringify((r.value?.repos ?? []).map((entry) => entry.name))}`);
+await post('settings.set', { sc: { roots: [root] } });
+
 // --- sc.status: statuses M / A / D / R with orig ---
 r = await post('sc.status', { repo: repoA });
 const byPath = Object.fromEntries((r.value?.files ?? []).map((f) => [f.path, f]));

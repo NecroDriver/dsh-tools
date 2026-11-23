@@ -933,6 +933,44 @@ window.__ModuleLoader__.load({
           }
           ensureScStyles();
 
+          // Live workspace roots from the sessions store (the same source the
+          // workspace UI uses): the main-view session's cwd first, then any
+          // other retained sessions'. Passed to sc.repos as hints so the panel
+          // always scans the workspace the user is actually in, even when the
+          // host-side workspace registry is empty or not started.
+          let sessionsService = null;
+          try {
+            const sessionsFiber = ctx.inject(['sessions'], (scope) => {
+              sessionsService = scope?.sessions ?? null;
+            });
+            if (sessionsFiber && typeof sessionsFiber.dispose === 'function') {
+              keep(() => { try { sessionsFiber.dispose(); } catch { /* already disposed */ } });
+            }
+          } catch { /* sessions unavailable → hints stay empty */ }
+          const scClientRoots = () => {
+            try {
+              const rows = Object.values(
+                sessionsService?.list?.getSnapshot?.()?.byId ?? {},
+              );
+              const ordered = [
+                ...rows.filter((row) => (row?.retainedBy?.mainView ?? 0) > 0),
+                ...rows.filter((row) => (row?.retainedBy?.mainView ?? 0) <= 0),
+              ];
+              const seen = new Set();
+              const roots = [];
+              for (const row of ordered) {
+                const cwd = typeof row?.cwd === 'string' ? row.cwd.trim() : '';
+                if (cwd === '') continue;
+                const key = cwd.toLowerCase();
+                if (seen.has(key)) continue;
+                seen.add(key);
+                roots.push(cwd);
+                if (roots.length >= 4) break;
+              }
+              return roots;
+            } catch { return []; }
+          };
+
           const fmtError = (error, fallback) => {
             if (typeof error?.message === 'string' && error.message !== '') {
               return typeof error?.code === 'string' && error.code !== '' ? `[${error.code}] ${error.message}` : error.message;
@@ -989,7 +1027,7 @@ window.__ModuleLoader__.load({
               setReposError('');
               let result;
               try {
-                result = await call('sc.repos', {});
+                result = await call('sc.repos', { roots: scClientRoots() });
               } catch (error) {
                 setRepos([]);
                 setReposError(error?.message ?? String(error));

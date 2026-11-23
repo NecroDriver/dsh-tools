@@ -1,4 +1,4 @@
-# dsh-tools 交付报告（2026-11-23，v0.6.2）
+# dsh-tools 交付报告（2026-11-23，v0.6.3）
 
 ## 状态
 
@@ -11,6 +11,16 @@
 - v0.6.0：**「资源控制」面板**（类 VSCode；见下节）。
 - v0.6.1：**「更多 → 重载插件」**——热重载入口（见下节），回应「每次都重启打断任务」的问题；实证 install 即热替换，零重启。
 - v0.6.2：**资源控制入口迁至右侧「开始」工具栏**（与 工作区文件/新建终端/浏览网页 同级），面板改为右栏标签页（见下节）。
+
+## v0.6.3（2026-11-23）
+
+### SC 空列表修复：客户端工作区根提示
+
+- 现象（用户 m02627）：面板显示「未发现 git 仓库」——debug log 证实 `sc.repos → ok` 但结果为空：根列表为空。源码核查 `@deepseek-ai/dsh-workspace`：`workspaceRegistry.list(): Workspace[]` 记录字段确实是 `.path`（zod `workspaceRecord = {path, title, sessionIds, createdAt, updatedAt}`），但 Web Host 里该 registry 可能未启动（`requireState()` 会 throw，旧代码静默吞掉）或为空 → 根列表空。
+- 修复（双保险）：① **客户端根提示**——client 运行时捕获 `sessions` 服务（子 fiber，v0.2.0 教训：不静态 inject），`scClientRoots()` 读 `sessions.list.getSnapshot().byId`（与官方 workspace UI 同一数据源：主视图会话 `retainedBy.mainView>0` 的 `cwd` 优先，去重 cap 4），随 `sc.repos` 请求作为 `payload.roots` 发送——用户所在工作区永远被扫描，无论宿主 registry 状态；② host `collectScRoots(clientRoots)` 合并顺序=客户端提示→registry（异常时 debugLog 记录原因，不再静默）→settings 根；`SC_MAX_CLIENT_ROOTS=4`，非法提示（相对路径/非字符串）过滤。
+- 层级语义（回应用户「先判断是不是单独项目，没有再深入一层」）：`scanForRepos` 本就先测根目录自身 `.git`（是 repo 即收、不再下钻），否则逐层下钻（3 层）——大工作区含多个子 git 项目正是该模型。
+- 观测性：`sc.repos` 每次记录 `roots=N (paths) repos=M` 到 debug log。
+- 测试：test-sc.mjs +2（客户端提示独力发现 repo / 非法提示忽略）17 项过；test-client-render.cjs +2（sessions fiber 请求 + sc.repos 收到 cwd 提示）28/28 过；smoke 27 过。
 
 ## v0.6.2（2026-11-23）
 

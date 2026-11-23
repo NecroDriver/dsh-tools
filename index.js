@@ -35,7 +35,7 @@ export const inject = ['webServer', 'connection'];
 
 // Single source of truth for the running generation; dev.ping reports it so the
 // Client can confirm a hot reload actually swapped this module.
-const MODULE_VERSION = 'v0.6.1';
+const MODULE_VERSION = 'v0.6.3';
 
 const RPC_KEY = 'dsh-tools';
 const HELPER_PATH = join(tmpdir(), 'dsh-tools-restart.ps1');
@@ -719,6 +719,7 @@ let workspaceRegistryService = null;
 const SC_SCAN_DEPTH = 3;          // levels below each root
 const SC_MAX_DIRS = 3000;         // directories visited per scan
 const SC_MAX_REPOS = 60;
+const SC_MAX_CLIENT_ROOTS = 4;    // live roots hinted by the client per request
 const SC_MAX_FILES = 500;         // files reported per repository
 const SC_DIFF_MAX_CHARS = 80000;  // diff text returned to the drawer
 const SC_DIFF_FILE_MAX = 6000;    // per-file diff fed to the commit model
@@ -772,10 +773,11 @@ function validateScFile(repo, filePath) {
   return normalized;
 }
 
-function collectScRoots() {
+function collectScRoots(clientRoots = []) {
   const roots = new Map(); // lowercased absolute → original casing
   const add = (candidate) => {
     if (typeof candidate !== 'string' || candidate.trim() === '') return;
+    if (!isAbsolute(candidate)) return; // hints must be absolute; registry/settings paths are too
     const absolute = resolve(candidate.trim());
     const key = absolute.toLowerCase();
     if (roots.has(key)) return;
@@ -784,14 +786,30 @@ function collectScRoots() {
     } catch { return; }
     roots.set(key, absolute);
   };
+  // 1) live client hints (the workspace the user is actually looking at)
+  for (const hint of clientRoots.slice(0, SC_MAX_CLIENT_ROOTS)) add(hint);
+  // 2) durable workspace registry (may be empty or not started in this host)
   try {
     const workspaces = workspaceRegistryService !== null
       && typeof workspaceRegistryService.list === 'function'
       ? workspaceRegistryService.list() : [];
     for (const workspace of Array.isArray(workspaces) ? workspaces : []) add(workspace?.path);
-  } catch { /* registry is a bonus; settings roots still work */ }
+  } catch (error) {
+    debugLog(`workspace registry unavailable: ${String(error?.message ?? error)}`);
+  }
+  // 3) explicit settings roots
   for (const root of getSettings().sc.roots) add(root);
   return [...roots.values()];
+}
+
+async function handleScRepos(payload) {
+  const clientRoots = Array.isArray(payload?.roots)
+    ? payload.roots.filter((item) => typeof item === 'string' && item.trim() !== '').slice(0, SC_MAX_CLIENT_ROOTS)
+    : [];
+  const roots = collectScRoots(clientRoots);
+  const repos = scanForRepos(roots);
+  debugLog(`sc.repos roots=${roots.length} (${roots.join(' | ') || 'none'}) repos=${repos.length}`);
+  return { ok: true, value: { roots, repos, truncated: repos.length >= SC_MAX_REPOS } };
 }
 
 function scanForRepos(roots) {
@@ -855,12 +873,6 @@ export function parsePorcelain(raw) {
 async function currentChanges(repo) {
   const result = await runGit(repo, ['status', '--porcelain=v1', '-z']);
   return parsePorcelain(result.stdout);
-}
-
-async function handleScRepos() {
-  const roots = collectScRoots();
-  const repos = scanForRepos(roots);
-  return { ok: true, value: { roots, repos, truncated: repos.length >= SC_MAX_REPOS } };
 }
 
 async function handleScStatus(payload) {
