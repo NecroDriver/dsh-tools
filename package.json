@@ -1,32 +1,32 @@
 {
-    "name":  "dsh-tools",
-    "version":  "0.6.1",
-    "private":  true,
-    "description":  "Desktop utilities for DeepSeek Harness: a More menu in the Windows caption bar with one-click app restart.",
-    "license":  "MIT",
-    "type":  "module",
-    "exports":  {
-                    ".":  "./index.js",
-                    "./client":  "./client.js",
-                    "./locale/*.json":  "./locale/*.json",
-                    "./icon":  "./icon.svg"
-                },
-    "files":  [
-                  "index.js",
-                  "client.js",
-                  "cordis.patch.yml",
-                  "locale/*.json",
-                  "docs",
-                  "icon.svg",
-                  "README.md"
-              ],
-    "dsh":  {
-                "bundle":  {
-                               "patch":  "./cordis.patch.yml"
-                           },
-                "client":  {
-                               "platform":  "web",
-                               "immediately":  true
-                           }
-            }
+  "name": "dsh-tools",
+  "version": "0.6.2",
+  "private": true,
+  "description": "Desktop utilities for DeepSeek Harness: a More menu in the Windows caption bar with one-click app restart.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
 }

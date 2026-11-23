@@ -188,9 +188,20 @@ const call = async (method, payload) => {
 };
 
 const registrations = [];
+const fibers = [];       // ctx.inject(names, cb) captures
+const fakeTabs = {       // sidebarRightTabs registry stub
+  defs: [],
+  disposed: [],
+  register(def) { this.defs.push(def); const h = { def }; this.disposed.push(h); return () => { h.gone = true; }; },
+};
 const ctx = {
   get: () => undefined,
   connection: { rpc: { call: (channel, key, envelope) => call(envelope.method, envelope.payload) } },
+  inject: (names, cb) => {
+    const fiber = { dispose() { this.disposed = true; } };
+    fibers.push({ names, cb, fiber });
+    return fiber;
+  },
   slots: {
     register: (reg, render) => { registrations.push({ slot: reg.name, ...reg, render }); return () => {}; },
     inject: (name, setup) => setup(),
@@ -214,18 +225,27 @@ const check = (label, condition) => {
 
 const dispose = mod.apply(ctx);
 
-const entry = registrations.find((r) => r.slot === 'sidebar.footer.action' && r.id === 'dsh-tools-sc');
-const overlay = registrations.find((r) => r.slot === 'shell.overlay' && r.id === 'dsh-tools-sc-panel');
-check('slot registrations exist', entry !== undefined && overlay !== undefined);
+// 0) guide type registration via the sidebarRightTabs capture
+const tabsFiber = fibers.find((f) => f.names.includes('sidebarRightTabs'));
+check('sidebarRightTabs fiber requested', tabsFiber !== undefined);
+tabsFiber.cb({ sidebarRightTabs: fakeTabs });
+check('tab type registered once', fakeTabs.defs.length === 1);
+const def = fakeTabs.defs[0];
+check('type id/kind', def?.id === 'dsh-tools-sc' && def?.kind === 'dsh-tools-sc');
+check('guide entry shape', def?.guide?.[0]?.id === 'sc' && def.guide[0].order === 5
+  && typeof def.guide[0].title === 'function' && typeof def.guide[0].description === 'function'
+  && typeof def.guide[0].icon === 'function');
+
+const paneTab = registrations.find((r) => r.slot === 'sidebar.right.pane.tab' && r.key === 'dsh-tools-sc');
+check('pane tab body registered', paneTab !== undefined);
+check('no sidebar footer entry', registrations.find((r) => r.slot === 'sidebar.footer.action') === undefined);
+check('no shell overlay drawer', registrations.find((r) => r.slot === 'shell.overlay') === undefined);
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 // Effects run async work that writes hook state; materialize again after.
-const render = () => {
-  const effects = [];
-  const tree = materialize(react, overlay.render(), '', effects);
-  for (const slot of react.instances.values()) { /* effects already recorded via slots */ }
-  return tree;
-};
+// paneTab.render is the component itself, so wrap it in an element to give
+// materialize a function-type node (it installs the hooks context).
+const render = () => materialize(react, react.createElement(paneTab.render, {}), '', []);
 const runEffects = async () => {
   const fns = [];
   for (const inst of react.instances.values()) {
@@ -236,22 +256,10 @@ const runEffects = async () => {
 };
 
 (async () => {
-  // 1) entry click opens the store
-  let tree = render(); await runEffects();
+  // 1) tab body mounts and loads repositories immediately
+  let tree = render(); await runEffects(); tree = render();
   const step = async () => { tree = render(); await runEffects(); tree = render(); };
-  const entryTree = materialize(react, entry.render(), '');
-  const entryBtn = findAll(entryTree, byClass('dsh-tools-scEntry'))[0];
-  check('entry button rendered', entryBtn !== undefined);
-  entryBtn.props.onClick();
-  await settle();
-
-  // 2) drawer opens, data loads
-  await step();
-  check('drawer open class', String(findAll(tree, byClass('dsh-tools-scDrawer'))[0]?.props.className ?? '').includes('is-open'));
-  if (process.env.DEBUG_RENDER) {
-    console.log('calls so far:', calls.map((c) => c.method).join(','));
-    console.log('drawer children count:', findAll(tree, byClass('dsh-tools-scDrawer'))[0]?.children.length);
-  }
+  check('tab body rendered', findAll(tree, byClass('dsh-tools-scTab'))[0] !== undefined);
   check('repo group shown', findAll(tree, byClass('dsh-tools-scRepoName'))[0]?.children[0] === 'repo-a');
   check('branch chip', findAll(tree, byClass('dsh-tools-scBranch'))[0]?.children[0] === 'main');
   const files = findAll(tree, byClass('dsh-tools-scFile'));
@@ -259,7 +267,7 @@ const runEffects = async () => {
   const badges = findAll(tree, byClass('dsh-tools-scBadge')).map((b) => b.children[0]).sort().join(',');
   check('badges A,D,M', badges === 'A,D,M');
 
-  // 3) diff toggles
+  // 2) diff toggles
   const mains = findAll(tree, byClass('dsh-tools-scFileMain'));
   mains[0].props.onClick();
   await settle();
@@ -267,7 +275,7 @@ const runEffects = async () => {
   const diff = findAll(tree, byClass('dsh-tools-scDiff'))[0];
   check('diff rendered', diff !== undefined && diff.children.some((line) => line.children[0] === '+hello'));
 
-  // 4) partial selection → commit bar
+  // 3) partial selection → commit bar
   const boxes = findAll(tree, (n) => n.type === 'input' && n.props.type === 'checkbox');
   check('three checkboxes', boxes.length === 3);
   boxes[1].props.onChange();
@@ -276,7 +284,7 @@ const runEffects = async () => {
   check('commit bar appears', findAll(tree, byClass('dsh-tools-scCommitBar')).length === 1);
   check('selection count', findAll(tree, byClass('dsh-tools-scCount'))[0]?.children[0] === '3');
 
-  // 5) AI message
+  // 4) AI message
   const genBtn = findAll(tree, byClass('dsh-tools-scBtn')).find((b) => b.children.some((c) => c.children?.[0] === 'AI 生成'));
   check('generate button present', genBtn !== undefined);
   genBtn.props.onClick();
@@ -287,7 +295,7 @@ const runEffects = async () => {
   const msgCall = calls.find((c) => c.method === 'sc.commitMessage');
   check('commitMessage got selection', JSON.stringify(msgCall?.payload.files) === JSON.stringify(['src/mod.js']));
 
-  // 6) commit with the AI message
+  // 5) commit with the AI message
   const commitBtn = findAll(tree, byClass('dsh-tools-scBtn is-primary'))[0]
     ?? findAll(tree, (n) => byClass('dsh-tools-scBtn')(n) && String(n.props.className).includes('is-primary'))[0];
   check('commit button present', commitBtn !== undefined);
@@ -299,20 +307,16 @@ const runEffects = async () => {
   check('commit message forwarded', commitCall?.payload.message === 'feat: add things');
   check('committed note shows hash', findAll(tree, (n) => n.children[0] === '已提交 abc1234').length === 1);
 
-  // 7) push from the group header
+  // 6) push from the group header
   const pushBtn = findAll(tree, byClass('dsh-tools-scIconBtn')).find((b) => b.props.title === '推送');
   check('push button present', pushBtn !== undefined);
   pushBtn.props.onClick();
   await settle(); await settle();
   check('push called', calls.some((c) => c.method === 'sc.push'));
 
-  // 8) Escape closes
-  check('esc listener armed', (windowListeners.keydown ?? []).length > 0);
-  for (const fn of windowListeners.keydown ?? []) fn({ key: 'Escape' });
-  await settle();
-  await step();
-  check('drawer closed', !String(findAll(tree, byClass('dsh-tools-scDrawer'))[0]?.props.className ?? '').includes('is-open'));
-
+  // 7) dispose unregisters the type
   dispose();
+  check('type disposed on unload', fakeTabs.disposed[0]?.gone === true);
+
   console.log(process.exitCode === 1 ? 'CLIENT RENDER TEST FAILED' : 'CLIENT RENDER TEST PASS');
 })().catch((error) => { console.error('FAIL exception:', error); process.exit(1); });

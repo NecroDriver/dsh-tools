@@ -57,10 +57,11 @@ read live from the transcript (`[data-chat-flow-kind="user"]` rows, timestamps
 and duplicated hidden blocks stripped), so it always matches what the session
 shows.
 
-### 5. Source Control (sidebar)
+### 5. Source Control (right "Start" toolbar)
 
-A **资源控制** icon button at the bottom of the sidebar (next to settings)
-toggles a VSCode-style drawer:
+A **资源控制** entry in the right sidebar's **开始 / Start** guide — the same
+list that offers 工作区文件 / 新建终端 / 浏览网页 — opens a VSCode-style tab in
+the right sidebar pane:
 
 - Repositories are discovered by scanning all registered workspace roots (plus
   custom roots from Tools settings), three levels deep, skipping
@@ -100,9 +101,10 @@ individually).
   teardown: it stops the app and the Host (plus the Host's children), waits for
   all PIDs to exit, relaunches the executable, and confirms the relaunch. It
   logs to `%TEMP%\dsh-tools-restart.log`.
-- Generate/Optimize register into the `conversation.input.right` slot; the
-  Source Control entry into `sidebar.footer.action` and its drawer into
-  `shell.overlay`; the settings section into `settings.section`.
+- Generate/Optimize register into the `conversation.input.right` slot; Source
+  Control registers a right-sidebar tab type through the `sidebarRightTabs`
+  service (guide entry + tab body in `sidebar.right.pane.tab`); the settings
+  section into `settings.section`.
 - Source Control runs real `git` via `git -C <repo> …` (`status
   --porcelain=v1 -z`, `diff HEAD --`, `add -A -- <paths>` + `commit -m … --
   <paths>` for pathspec-scoped partial commits, `log --pretty=format:%s`,
@@ -124,8 +126,8 @@ individually).
   synthetic diffs, partial-commit isolation, log, AI commit-message prompt
   composition, traversal guards.
 - `node scripts/test-client-render.cjs` — renders the client bundle in a VM
-  with a mini React: entry button, drawer open, groups, badges, diff view,
-  checkboxes, partial commit flow, push, Esc handling.
+  with a mini React: guide-type registration, tab body mount, groups, badges,
+  diff view, checkboxes, partial commit flow, push, disposal.
 - `node scripts/test-two-stage.cjs` — the hidden two-stage restart helper
   against dummy processes (needs the Electron node binary wiring it uses).
 - Host-side diagnostics go to `%TEMP%\dsh-tools-debug.log` (module load,

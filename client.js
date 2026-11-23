@@ -65,9 +65,8 @@ window.__ModuleLoader__.load({
         modelsFailed: '模型列表加载失败',
         modelsEmpty: '未发现可用模型',
         sc: '资源控制',
-        scEntryTitle: '打开资源控制面板',
+        scGuideDesc: '查看变更，生成提交信息并提交推送',
         scRefresh: '刷新',
-        scClose: '关闭面板',
         scLoading: '正在扫描仓库…',
         scEmpty: '未发现 git 仓库',
         scEmptyHint: '自动扫描工作区目录；也可在工具设置里添加其他根目录。',
@@ -94,7 +93,7 @@ window.__ModuleLoader__.load({
         scNoFiles: '勾选要提交的文件',
         scDiffFailed: 'diff 加载失败',
         scSelectHint: '勾选文件后可单笔提交',
-        fSc: '侧边栏「资源控制」面板',
+        fSc: '开始页「资源控制」入口',
         scRootsTitle: '资源控制扫描根目录',
         scRootsIntro: '自动扫描所有工作区目录；可再添加其他根目录（向下最多 3 层）。',
         scAddRoot: '添加目录',
@@ -145,9 +144,8 @@ window.__ModuleLoader__.load({
         modelsFailed: 'Failed to load models',
         modelsEmpty: 'No models discovered',
         sc: 'Source Control',
-        scEntryTitle: 'Open the Source Control panel',
+        scGuideDesc: 'Review changes, draft a message, commit and push',
         scRefresh: 'Refresh',
-        scClose: 'Close panel',
         scLoading: 'Scanning repositories…',
         scEmpty: 'No git repositories found',
         scEmptyHint: 'Workspace directories are scanned automatically; add more roots in Tools settings.',
@@ -174,7 +172,7 @@ window.__ModuleLoader__.load({
         scNoFiles: 'Select files to commit',
         scDiffFailed: 'Failed to load diff',
         scSelectHint: 'Select files to commit them alone',
-        fSc: 'Sidebar "Source Control" panel',
+        fSc: '"Start" page Source Control entry',
         scRootsTitle: 'Source Control scan roots',
         scRootsIntro: 'Workspace directories are scanned automatically; add more roots (up to 3 levels deep).',
         scAddRoot: 'Add directory',
@@ -195,6 +193,9 @@ window.__ModuleLoader__.load({
     const modelOverride = { provider: '', model: '' };
     // apply() installs a hook so flag changes can (un)mount the caption menu.
     const runtime = { applyFlags: null };
+    // Set by registerScUi: re-evaluates the sidebarRightTabs type registration
+    // against featureFlags.sc when settings change.
+    let scFlagsHook = null;
 
     const MENU_CSS = [
       '.dsh-tools-menu{position:absolute;top:calc(var(--dsh-windows-titlebar-height,40px) - 4px);z-index:1200;min-width:250px;padding:6px;border-radius:10px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 10px 30px rgba(0,0,0,.20);font:inherit;font-size:14px;color:var(--dsw-alias-label-primary);}',
@@ -262,13 +263,9 @@ window.__ModuleLoader__.load({
     const SC_SPARK_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>';
 
     const SC_CSS = [
-      // entry icon in the sidebar footer (next to the settings entry)
-      '.dsh-tools-scEntry{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:default;}',
-      '.dsh-tools-scEntry:hover,.dsh-tools-scEntry:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary);outline:none;}',
-      '.dsh-tools-scEntry[aria-pressed="true"]{color:var(--dsw-alias-brand-primary,#3b82f6);}',
-      // right-side drawer (shell.overlay slot)
-      '.dsh-tools-scDrawer{position:fixed;top:0;right:0;bottom:0;width:min(440px,92vw);display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-overlay));border-left:1px solid var(--dsw-alias-border-l1);box-shadow:-12px 0 32px rgba(0,0,0,.22);z-index:1150;font-size:13.5px;color:var(--dsw-alias-label-primary);transform:translateX(100%);transition:transform 200ms cubic-bezier(.4,0,.2,1);visibility:hidden;}',
-      '.dsh-tools-scDrawer.is-open{transform:translateX(0);visibility:visible;}',
+      // tab body inside the right-sidebar pane (sidebar.right.pane.tab slot);
+      // the pane provides the box, this fills it edge to edge.
+      '.dsh-tools-scTab{display:flex;flex-direction:column;height:100%;min-height:0;font-size:13.5px;color:var(--dsw-alias-label-primary);}',
       '.dsh-tools-scHeader{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;}',
       '.dsh-tools-scHeaderTitle{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;flex:1;min-width:0;}',
       '.dsh-tools-scIconBtn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:default;flex:none;}',
@@ -922,33 +919,19 @@ window.__ModuleLoader__.load({
           return effectBody();
         };
 
-        // ---- source control (sidebar entry + shell.overlay drawer) ----
-        // A tiny plain store carries the open/closed state so the sidebar
-        // entry (aria-pressed) and the drawer stay in sync across slots.
+        // ---- source control (right sidebar: Start-guide entry + tab) ----
+        // The guide card and the tab chrome come from the app itself: we
+        // register a tab type with a guide entry on the sidebarRightTabs
+        // registry — the same mechanism 工作区文件/新建终端/浏览网页 use — and
+        // provide the pane body via the keyed sidebar.right.pane.tab slot.
+        const SC_TAB_TYPE_ID = 'dsh-tools-sc';
+
         const registerScUi = () => {
           if (React === null || typeof ctx?.slots?.register !== 'function'
             || typeof ctx.slots.inject !== 'function') {
             return () => {};
           }
           ensureScStyles();
-
-          const store = {
-            open: false,
-            listeners: new Set(),
-            setOpen(value) { if (store.open !== value) { store.open = value; store.emit(); } },
-            toggle() { store.open = !store.open; store.emit(); },
-            emit() { for (const listener of [...store.listeners]) { try { listener(); } catch { /* listener gone */ } } },
-            subscribe(listener) { store.listeners.add(listener); return () => { store.listeners.delete(listener); }; },
-            snapshot() { return store.open; },
-          };
-          const useOpen = () => (typeof React.useSyncExternalStore === 'function'
-            ? React.useSyncExternalStore(store.subscribe, store.snapshot)
-            : (() => {
-              // React 17 fallback: local state mirrors the store.
-              const [value, setValue] = React.useState(store.open);
-              React.useEffect(() => store.subscribe(() => setValue(store.open)), []);
-              return value;
-            })());
 
           const fmtError = (error, fallback) => {
             if (typeof error?.message === 'string' && error.message !== '') {
@@ -962,18 +945,24 @@ window.__ModuleLoader__.load({
           });
           const STATUS_DICT = { A: 'stA', M: 'stM', D: 'stD', R: 'stR' };
 
-          const ScEntryButton = () => {
-            const open = useOpen();
-            if (!featureFlags.sc) return null;
-            return React.createElement('button', {
-              type: 'button',
-              className: 'dsh-tools-scEntry',
-              title: t('scEntryTitle'),
-              'aria-label': t('sc'),
-              'aria-pressed': open ? 'true' : 'false',
-              onClick: () => store.toggle(),
-            }, icon(SC_GLYPH));
-          };
+          // Guide card icon; the standard EntryBox calls it as a component
+          // with {size, className} (size 22 without descriptions, else 26).
+          const ScGuideArt = ({ size = 26, className }) => React.createElement('svg', {
+            width: size,
+            height: size,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            className,
+            'aria-hidden': 'true',
+          },
+          React.createElement('line', { x1: 6, y1: 3, x2: 6, y2: 15 }),
+          React.createElement('circle', { cx: 18, cy: 6, r: 3 }),
+          React.createElement('circle', { cx: 6, cy: 18, r: 3 }),
+          React.createElement('path', { d: 'M18 9a9 9 0 0 1-9 9' }));
 
           const DiffView = ({ text }) => React.createElement('pre', { className: 'dsh-tools-scDiff' },
             String(text ?? '').split('\n').map((line, index) => {
@@ -985,7 +974,6 @@ window.__ModuleLoader__.load({
             }));
 
           const ScPanel = () => {
-            const open = useOpen();
             const [repos, setRepos] = React.useState(null);      // null = loading
             const [reposError, setReposError] = React.useState('');
             const [statusMap, setStatusMap] = React.useState({}); // repo.id -> {branch,files,truncated,error}
@@ -1033,17 +1021,9 @@ window.__ModuleLoader__.load({
               setStatusMap(next);
             }, []);
 
-            React.useEffect(() => {
-              if (open && repos === null) void loadAll();
-            }, [open, repos, loadAll]);
-
-            // Escape closes the drawer (capture phase, window level).
-            React.useEffect(() => {
-              if (!open) return undefined;
-              const onKeyDown = (event) => { if (event.key === 'Escape') store.setOpen(false); };
-              window.addEventListener('keydown', onKeyDown, true);
-              return () => window.removeEventListener('keydown', onKeyDown, true);
-            }, [open]);
+            // The pane only mounts this body while our tab is active, so
+            // mounting is exactly "the panel opened" — load immediately.
+            React.useEffect(() => { void loadAll(); }, [loadAll]);
 
             const refreshRepo = async (repo) => {
               try {
@@ -1266,7 +1246,7 @@ window.__ModuleLoader__.load({
             });
 
             return React.createElement('div', {
-              className: `dsh-tools-scDrawer${open ? ' is-open' : ''}`,
+              className: 'dsh-tools-scTab',
               role: 'complementary',
               'aria-label': t('sc'),
             },
@@ -1279,13 +1259,7 @@ window.__ModuleLoader__.load({
                 className: 'dsh-tools-scIconBtn',
                 title: t('scRefresh'),
                 onClick: () => { void loadAll(); },
-              }, icon(SC_REFRESH_GLYPH)),
-              React.createElement('button', {
-                type: 'button',
-                className: 'dsh-tools-scIconBtn',
-                title: t('scClose'),
-                onClick: () => store.setOpen(false),
-              }, icon(SC_CLOSE_GLYPH))),
+              }, icon(SC_REFRESH_GLYPH))),
             React.createElement('div', { className: 'dsh-tools-scBody' },
               repos === null ? React.createElement('div', { className: 'dsh-tools-scState' }, t('scLoading')) : null,
               repos !== null && reposError !== '' ? React.createElement('div', { className: 'dsh-tools-scState' },
@@ -1302,30 +1276,62 @@ window.__ModuleLoader__.load({
               repos !== null && reposError === '' ? repoGroups : null));
           };
 
-          const effectBody = () => {
-            const disposers = [];
-            disposers.push(ctx.slots.inject('sidebar.footer.action', () => {
-              const unregister = ctx.slots.register(
-                { name: 'sidebar.footer.action', id: 'dsh-tools-sc', order: 10, label: () => t('sc') },
-                () => React.createElement(ScEntryButton),
-              );
-              return unregister;
-            }));
-            disposers.push(ctx.slots.inject('shell.overlay', () => {
-              const unregister = ctx.slots.register(
-                { name: 'shell.overlay', id: 'dsh-tools-sc-panel', order: 20 },
-                () => React.createElement(ScPanel),
-              );
-              return unregister;
-            }));
-            return () => {
-              for (const dispose of disposers) { try { dispose(); } catch { /* already gone */ } }
-            };
+          // Register/unregister the tab type against the current flag. The
+          // registry lives on the app's rightbar package; register() returns
+          // its own disposer, so the guide entry vanishes when we unload or
+          // the feature is toggled off in Tools settings.
+          let tabsService = null;
+          let typeDispose = null;
+          const syncType = () => {
+            const want = featureFlags.sc === true && tabsService !== null
+              && typeof tabsService.register === 'function';
+            if (want && typeDispose === null) {
+              typeDispose = tabsService.register({
+                id: SC_TAB_TYPE_ID,
+                kind: SC_TAB_TYPE_ID,
+                title: () => t('sc'),
+                guide: [{
+                  id: 'sc',
+                  order: 5, // above 工作区文件(10)/新建终端(20)/浏览网页 — the requested spot
+                  title: () => t('sc'),
+                  description: () => t('scGuideDesc'),
+                  icon: ScGuideArt,
+                }],
+              });
+            } else if (!want && typeDispose !== null) {
+              try { typeDispose(); } catch { /* registry already refreshed */ }
+              typeDispose = null;
+            }
           };
-          if (typeof ctx.effect === 'function') {
-            return ctx.effect(effectBody, 'dsh-tools: source control');
-          }
-          return effectBody();
+          scFlagsHook = syncType;
+
+          const disposers = [];
+          // Pane body for our tab type. The dock dispatches the keyed
+          // sidebar.right.pane.tab slot with the ACTIVE type's id, so keying
+          // on the type id is all that is needed to own the body.
+          disposers.push(ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+            { name: 'sidebar.right.pane.tab', key: SC_TAB_TYPE_ID },
+            ScPanel,
+          )));
+          // Runtime capture of the tabs registry (child fiber: when the
+          // service is absent the fiber stays pending and the guide entry
+          // simply never appears — nothing else breaks).
+          try {
+            const tabsFiber = ctx.inject(['sidebarRightTabs'], (scope) => {
+              tabsService = scope?.sidebarRightTabs ?? null;
+              syncType();
+            });
+            if (tabsFiber && typeof tabsFiber.dispose === 'function') {
+              disposers.push(() => { try { tabsFiber.dispose(); } catch { /* already disposed */ } });
+            }
+          } catch { /* client runtime without callback inject */ }
+          syncType();
+
+          return () => {
+            scFlagsHook = null;
+            if (typeDispose !== null) { try { typeDispose(); } catch { /* already gone */ } typeDispose = null; }
+            for (const dispose of disposers.splice(0)) { try { dispose(); } catch { /* already gone */ } }
+          };
         };
 
         // ---- state ----
@@ -1575,8 +1581,12 @@ window.__ModuleLoader__.load({
 
         // Flag changes coming back from the settings panel re-evaluate what
         // renders. Slot items and the history handler read featureFlags live;
-        // only the caption menu owns real DOM that must be (un)mounted here.
-        runtime.applyFlags = () => { ensureMounted(); };
+        // the caption menu owns real DOM that must be (un)mounted here, and
+        // the SC tab type is (un)registered on the sidebarRightTabs registry.
+        runtime.applyFlags = () => {
+          ensureMounted();
+          if (scFlagsHook !== null) { try { scFlagsHook(); } catch { /* registry gone */ } }
+        };
 
         if (document.body !== null) {
           const bodyObserver = new MutationObserver(ensureMounted);
@@ -1613,7 +1623,7 @@ window.__ModuleLoader__.load({
           console.warn('[dsh-tools] settings panel unavailable:', error);
         }
 
-        // Source control entry + drawer.
+        // Source control: Start-guide entry + right-sidebar tab.
         try {
           keep(registerScUi());
         } catch (error) {

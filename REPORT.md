@@ -1,15 +1,26 @@
-# dsh-tools 交付报告（2026-11-23，v0.6.1）
+# dsh-tools 交付报告（2026-11-23，v0.6.2）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.6.1 安装于 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
+- 插件 `dsh-tools` v0.6.2 安装于 desktop profile（**github:NecroDriver/dsh-tools git 安装**），Host fiber **active**。
 - **按钮重启已端到端验证成功**（v0.2.3 起多次实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
 - v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer。
 - v0.4.0：**输入历史 ↑/↓**（终端式）——光标在输入框时 ↑ 载入上一条**用户已发送消息**（DOM `[data-chat-flow-kind="user"]` 实时读取），↓ 向最新回走，越过最新恢复原草稿。v0.4.3：历史文本清洗（时间戳/隐藏重复块折叠）。
 - v0.5.0：**输入栏「优化」按钮**（提示词改写，composer 生成/优化期间锁定）+ **系统设置 → 工具设置**（每功能开关、自定义模型 provider+model、模型目录来自 `models.list`）。
-- v0.6.0：**侧边栏「资源控制」**——类 VSCode 面板（见下节）。
-- v0.6.1：**「更多 → 重载插件」**——热重载入口（见下节），回应「每次都重启打断任务」的问题。
+- v0.6.0：**「资源控制」面板**（类 VSCode；见下节）。
+- v0.6.1：**「更多 → 重载插件」**——热重载入口（见下节），回应「每次都重启打断任务」的问题；实证 install 即热替换，零重启。
+- v0.6.2：**资源控制入口迁至右侧「开始」工具栏**（与 工作区文件/新建终端/浏览网页 同级），面板改为右栏标签页（见下节）。
+
+## v0.6.2（2026-11-23）
+
+### SC 入口迁至右侧「开始」工具栏
+
+- 背景：用户 m02352（截图红框）——「谁让你加左边侧边栏，我不说了在右侧工具栏吗，和工作区文件这些统一级别的」。
+- 源码调查（决定性）：开始页按钮列表（工作区文件/新建终端/浏览网页）**不是 slot**，来自 **`sidebarRightTabs` 服务**（右栏包 `ctx.reflect.provide('sidebarRightTabs', tabs)` 的 SidebarRightTabRegistry）；各功能包注册 tab 类型时带 `guide` 数组（files=`{id:'workspace',order:10,...}`，terminal=order:20，browser 同构）；`refresh()` 把 active 定义 flatMap 成 guideEntries 按 order 排序；GuideBody 对每个 entry `renderSlot('sidebar.right.tab.guide.entry',...,{fallback:<EntryBox/>})`——**标准卡片+点击 openTab(kind) 全自动**。`RANKS={extension:3,builtin:2,fallback:1}`，第三方缺省=extension。tab 打开按类型 id dispatch `sidebar.right.pane.tab`（keyed）。
+- Client（`client.js`）：运行时子 fiber 捕获 `sidebarRightTabs`（v0.2.0 教训：不静态 inject，缺席=pending 不炸）；`syncType()` 在 `featureFlags.sc` 开且服务可用时 `tabsService.register({id:SC_TAB_TYPE_ID('dsh-tools-sc'), kind, title:()=>t('sc'), guide:[{id:'sc', order:5, title, description:()=>t('scGuideDesc'), icon:ScGuideArt}]})`（order:5=列表最顶）；body 注册 `ctx.slots.inject('sidebar.right.pane.tab', ()=>ctx.slots.register({name:'sidebar.right.pane.tab', key:SC_TAB_TYPE_ID}, ScPanel))`；ScPanel 改造为 tab body（挂载即 loadAll，height:100%，去抽屉/关闭钮/Esc）；删旧 `sidebar.footer.action` 入口与 `shell.overlay` 抽屉、store/useOpen；flag 关或卸载时 dispose 类型注册（guide entry 即消失）。**注意 MAX_DESCRIBED_ENTRIES=4**：第 5 个 entry 会让所有 entry 的 description 隐藏（平台规则，接受）。
+- 测试：test-client-render.cjs 重写断言（fakeTabs 注册表/slots 记录 key 注册）**26/26 过**——踩坑：render 是组件本体非 thunk，须 `materialize(react, react.createElement(paneTab.render,{}))` 包 element 走 hooks 上下文；runEffects 后需再 render() 取新树。smoke 27 项、two-stage 回归过。
+- 部署：install_bundle github 源（v0.6.1 实证 install 自动热替换 Web Host，无需重启）→ F5 生效。
 
 ## v0.6.1（2026-11-23）
 
