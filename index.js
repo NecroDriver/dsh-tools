@@ -35,7 +35,7 @@ export const inject = ['webServer', 'connection'];
 
 // Single source of truth for the running generation; dev.ping reports it so the
 // Client can confirm a hot reload actually swapped this module.
-const MODULE_VERSION = 'v0.6.4';
+const MODULE_VERSION = 'v0.6.5';
 
 const RPC_KEY = 'dsh-tools';
 const HELPER_PATH = join(tmpdir(), 'dsh-tools-restart.ps1');
