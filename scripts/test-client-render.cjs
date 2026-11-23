@@ -36,6 +36,7 @@ function fakeElement(tag) {
 const windowListeners = {};
 const documentListeners = {};
 const execCommands = [];
+const moInstances = [];   // MutationObserver stub instances (phrase-bar popup avoidance)
 const sandbox = {
   console,
   setTimeout: (fn) => { queueMicrotask(fn); return 0; },
@@ -52,7 +53,12 @@ const sandbox = {
     querySelector: () => null,
     execCommand: (...args) => { execCommands.push(args); return true; },
   },
-  MutationObserver: class { observe() {} disconnect() {} },
+  MutationObserver: class {
+    constructor(cb) { this.cb = cb; moInstances.push(this); }
+    observe() { this.live = true; }
+    disconnect() { this.live = false; }
+    trigger() { if (this.live !== false) this.cb([]); }
+  },
   Node: { TEXT_NODE: 3, ELEMENT_NODE: 1 },
   InputEvent: class {},
   getSelection: () => null,
@@ -352,6 +358,30 @@ const runEffects = async () => {
   chips[0].props.onClick({ currentTarget: { closest: (sel) => (sel === '[data-composer-card]' ? fakeCard : null) } });
   check('chip click inserts text at caret (no selectAll)',
     execCommands.length === 1 && execCommands[0][0] === 'insertText' && execCommands[0][2] === '使用 skill 优化');
+
+  // 7b) popup avoidance: a sibling entry in the overlay anchor hides the bar,
+  //     and it restores itself once the sibling is gone (user report 2026-11-23)
+  const phraseBarNode = findAll(phraseTree, byClass('dsh-tools-phraseBar'))[0];
+  const fakeAnchor = { getAttribute: (n) => (n === 'data-composer-overlay' ? '' : null), children: [] };
+  const fakeBar = { parentElement: fakeAnchor, nodeType: 1 };
+  fakeAnchor.children.push(fakeBar);
+  phraseBarNode.props.ref(fakeBar);
+  const barObserver = moInstances[moInstances.length - 1];
+  check('phrase bar watches the overlay anchor', barObserver !== undefined && barObserver.live === true);
+  fakeAnchor.children.push({ nodeType: 1 });                       // sibling popup shell appears
+  barObserver.trigger();
+  let busyTree = materialize(react, react.createElement(phraseReg.render, {}), 'ph', []);
+  const busyBar = findAll(busyTree, byClass('dsh-tools-phraseBar'))[0];
+  check('sibling popup hides the phrase bar',
+    busyBar !== undefined && /is-hidden/.test(String(busyBar.props.className))
+    && findAll(busyTree, byClass('dsh-tools-phrase')).length === 0);
+  fakeAnchor.children.pop();                                        // popup closes
+  barObserver.trigger();
+  const restTree = materialize(react, react.createElement(phraseReg.render, {}), 'ph', []);
+  check('phrase bar restores after popup closes',
+    findAll(restTree, byClass('dsh-tools-phrase')).length === 2);
+  restTree && findAll(restTree, byClass('dsh-tools-phraseBar'))[0]?.props.ref(null);
+  check('bar unmount disconnects the observer', barObserver.live === false);
 
   // 8) settings panel: phrases editor round-trips through settings.set
   const settingsReg = registrations.find((r) => r.slot === 'settings.section' && r.id === 'dsh-tools');

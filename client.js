@@ -281,12 +281,17 @@ window.__ModuleLoader__.load({
       '.dsh-tools-note.is-error{color:var(--dsw-alias-state-error-primary);}',
       // ---- quick phrases bar (conversation.input.overlay slot) ----
       // The overlay anchor is a zero-height absolute strip pinned to the top of
-      // the composer card; translateY(-100%) floats the pill row just above
-      // the input box (user request 2026-11-23).
-      '.dsh-tools-phraseBar{position:absolute;left:0;right:0;top:0;transform:translateY(-100%);display:flex;gap:6px;padding:0 2px 7px;overflow-x:auto;scrollbar-width:none;z-index:6;}',
+      // the composer card. Official convention (InputBar.module.css): entries
+      // position themselves with bottom:100% + gap; the strip is shared with
+      // transient popup shells (slash menu, popup select), so the bar also
+      // hides itself while a sibling popup is open (see attachBarNode).
+      '.dsh-tools-phraseBar{position:absolute;left:0;right:0;bottom:100%;display:flex;gap:6px;padding:0 2px 8px;overflow-x:auto;scrollbar-width:none;z-index:6;}',
       '.dsh-tools-phraseBar::-webkit-scrollbar{display:none;}',
-      '.dsh-tools-phrase{flex:none;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;height:24px;padding:0 11px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:var(--dsh-specific-input-major,var(--dsw-alias-bg-layer-1,#fff));box-shadow:var(--dsw-elevation-soft,none);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:22px;cursor:default;}',
-      '.dsh-tools-phrase:hover,.dsh-tools-phrase:focus-visible{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary,#3b82f6);outline:none;}',
+      '.dsh-tools-phraseBar.is-hidden{display:none;}',
+      '.dsh-tools-phrase{flex:none;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;height:24px;padding:0 11px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:var(--dsh-specific-input-major,var(--dsw-alias-bg-layer-1,#fff));box-shadow:var(--dsw-elevation-soft,none);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:22px;cursor:pointer;}',
+      '.dsh-tools-phrase:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary,#3b82f6);}',
+      '.dsh-tools-phrase:focus-visible{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary,#3b82f6);outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:1px;}',
+      '.dsh-tools-phrase:active{filter:brightness(.95);}',
       // ---- quick phrases editor (settings panel section) ----
       '.dsh-tools-phraseRow{display:flex;align-items:center;gap:8px;}',
       '.dsh-tools-phraseInput{flex:1;min-width:0;padding:6px 9px;border-radius:7px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2,transparent);color:inherit;font:inherit;font-size:13px;}',
@@ -757,6 +762,9 @@ window.__ModuleLoader__.load({
         // Floating pill row above the composer; click inserts at the caret
         // (user request 2026-11-23). Reads phraseStore so the settings panel
         // can refresh every mounted bar without re-registering the slot.
+        // Overlap avoidance (user report 2026-11-23): the overlay strip is
+        // shared with transient popup shells (slash menu / popup select), so
+        // the bar watches its anchor and hides while a sibling popup is open.
         const registerPhrasesBar = () => {
           if (React === null || typeof ctx?.slots?.register !== 'function'
             || typeof ctx.slots.inject !== 'function') {
@@ -764,17 +772,71 @@ window.__ModuleLoader__.load({
           }
           ensureGenStyles();
 
+          let barNode = null;
+          let barObserver = null;
+          let busySetter = null;
+          const setOverlayBusy = (busy) => { if (busySetter !== null) busySetter(busy); };
+          const detachBarObserver = () => {
+            if (barObserver !== null) {
+              try { barObserver.disconnect(); } catch { /* already gone */ }
+              barObserver = null;
+            }
+          };
+          const findOverlayAnchor = (node) => {
+            let cur = node;
+            let hops = 0;
+            while (cur !== null && hops < 4) {
+              if (typeof cur.getAttribute === 'function'
+                && cur.getAttribute('data-composer-overlay') != null) return cur;
+              cur = cur.parentElement ?? null;
+              hops += 1;
+            }
+            return null;
+          };
+          // Stable ref callback: React calls it once per mount/unmount, so the
+          // observer lifecycle follows the bar element exactly.
+          const attachBarNode = (node) => {
+            detachBarObserver();
+            barNode = node;
+            if (node === null) return;
+            const anchor = findOverlayAnchor(node);
+            if (anchor === null) return;
+            let mine = node;
+            while (mine.parentElement != null && mine.parentElement !== anchor) mine = mine.parentElement;
+            const kids = () => anchor.childNodes ?? anchor.children ?? [];
+            const isBusy = () => {
+              for (const kid of kids()) {
+                if (kid == null || kid === mine) continue;
+                if (kid.nodeType != null && kid.nodeType !== 1) continue;
+                return true;
+              }
+              return false;
+            };
+            setOverlayBusy(isBusy());
+            if (typeof MutationObserver !== 'function') return;
+            barObserver = new MutationObserver(() => setOverlayBusy(isBusy()));
+            barObserver.observe(anchor, { childList: true });
+          };
+
           const PhrasesBar = () => {
             const items = typeof React.useSyncExternalStore === 'function'
               ? React.useSyncExternalStore(phraseStore.subscribe, phraseStore.snapshot, phraseStore.snapshot)
               : phraseStore.snapshot();
+            const [overlayBusy, setBusy] = React.useState(false);
+            busySetter = setBusy;
             if (featureFlags.phrases !== true || items.length === 0) return null;
-            return React.createElement('div', { className: 'dsh-tools-phraseBar' },
+            if (overlayBusy) {
+              // Keep the element (and observer) alive while a popup owns the
+              // strip; it restores itself when the popup closes.
+              return React.createElement('div', { className: 'dsh-tools-phraseBar is-hidden', ref: attachBarNode, 'aria-hidden': 'true' });
+            }
+            return React.createElement('div', { className: 'dsh-tools-phraseBar', ref: attachBarNode },
               items.map((text, index) => React.createElement('button', {
                 key: `${index}-${text}`,
                 type: 'button',
                 className: 'dsh-tools-phrase',
                 title: `${text}\n${t('phrasesChipTitle')}`,
+                'aria-label': text,
                 onClick: (event) => { insertPhraseAtCaret(event.currentTarget, text); },
               }, text)));
           };

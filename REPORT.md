@@ -1,8 +1,8 @@
-# dsh-tools 交付报告（2026-11-23，v0.6.5）
+# dsh-tools 交付报告（2026-11-23，v0.6.6）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.6.5 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.3 已装于 desktop profile 并上线验证：SC 面板 `sc.repos roots=5 … repos=13`。
+- 插件 `dsh-tools` v0.6.6 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.5 已上线验证：重启后 `webServer route mounted`（无 duplicate——ctx.effect 修复生效）、`sc.repos roots=1` 随会话切换、用户已配置两条常用语。
 - **按钮重启已端到端验证成功**（v0.2.3 起多次实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
 - v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer。
@@ -13,6 +13,19 @@
 - v0.6.2：**资源控制入口迁至右侧「开始」工具栏**（与 工作区文件/新建终端/浏览网页 同级），面板改为右栏标签页（见下节）。
 - v0.6.4：**输入框上方常用语悬浮条**（点击插入光标处、最多 5 条、工具设置可编辑）+ **热替换根因修复（ctx.effect teardown）** + **资源控制分组默认折叠**（见下节）。
 - v0.6.5：**资源控制只扫当前工作区**（主视图会话根互斥 registry，修复跨工作区父级/兄弟项目污染）+ 主视图切换自动重扫 + 空态显示实际扫描根（见下节）。
+- v0.6.6：**常用语条重叠修复**（官方 `bottom:100%`+gap 定位 + 弹层避让）+ a11y（aria-label/focus-visible/pointer/按压反馈）（见下节）。
+
+## v0.6.6（2026-11-23）
+
+### 常用语条重叠修复（用户 m03747：「这个地方会有重叠」——pill 压输入容器顶边、与弹出层共带冲突）
+
+- 根因（源码实证 `dsh-client-ui-conversation` InputBar.module.css）：`[data-composer-overlay]` 锚点是钉在 composer 卡片顶边的零高绝对条带，官方注释明确该条带同时是 **menu / popupSelect shell**——条目约定 `bottom:100% + gap` 定位。v0.6.4 用 `top:0; transform:translateY(-100%)` 且永远占带：视觉上压卡片顶边，且斜杠菜单/弹出选择器打开时必然重叠。附件预览在卡片内独立 slot（`conversation.input.attachments`），与本条无关。
+- 修复三件套：
+  1. **官方定位**：`bottom:100%` + `padding-bottom:8px`（去 transform，严格按官方约定留 gap）；
+  2. **弹层避让**：稳定 ref 回调 `attachBarNode` 向上找 `[data-composer-overlay]` 锚点，`MutationObserver(childList)` 监听锚点兄弟节点——出现非自身元素节点（弹出 shell）→ 整条 `display:none`（渲染 `is-hidden` 占位 div 保住 observer 生命周期，不能 return null 否则无法感知弹出层关闭）；弹出层移除 → 自动恢复；
+  3. **a11y/交互**（ui-ux-pro-max design_review 清单）：pill 加 `aria-label` 全文（截断披露）、独立 `:focus-visible` outline、`cursor:pointer`（原 default 是 bug）、`:active` 按压反馈。
+- 测试：test-client-render.cjs +4（MutationObserver 桩升级为记录实例+手动 trigger；锚点观察建立 / 兄弟弹出→is-hidden 且无 chips / 移除→恢复 / ref(null) 卸载断开 observer）40 项过；smoke 32 项、test-sc 20 项、two-stage 回归过。
+- 设计审查：按用户要求经 ui-ux-pro-max skill 跑 design_review（desktop），非相关规则（RSC/AI disclaimer 等）不适用已说明。
 
 ## v0.6.5（2026-11-23）
 
