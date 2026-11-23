@@ -814,18 +814,25 @@ function collectScRoots(clientRoots = []) {
     } catch { return; }
     roots.set(key, absolute);
   };
-  // 1) live client hints (the workspace the user is actually looking at)
+  // 1) live client hints (the workspace the user is actually looking at).
+  //    v0.6.5: hints are now EXCLUSIVE of the durable registry. The registry
+  //    lists EVERY workspace on this machine — other sessions' directories —
+  //    so merging it while the user sits in one workspace showed that
+  //    workspace's parent and siblings (m03593: reader workspace listed ai/,
+  //    dsh-tools/, AICX-V3…). Consult it only when the client could not hint
+  //    a root at all (host-only callers, headless probes).
   for (const hint of clientRoots.slice(0, SC_MAX_CLIENT_ROOTS)) add(hint);
-  // 2) durable workspace registry (may be empty or not started in this host)
-  try {
-    const workspaces = workspaceRegistryService !== null
-      && typeof workspaceRegistryService.list === 'function'
-      ? workspaceRegistryService.list() : [];
-    for (const workspace of Array.isArray(workspaces) ? workspaces : []) add(workspace?.path);
-  } catch (error) {
-    debugLog(`workspace registry unavailable: ${String(error?.message ?? error)}`);
+  if (roots.size === 0) {
+    try {
+      const workspaces = workspaceRegistryService !== null
+        && typeof workspaceRegistryService.list === 'function'
+        ? workspaceRegistryService.list() : [];
+      for (const workspace of Array.isArray(workspaces) ? workspaces : []) add(workspace?.path);
+    } catch (error) {
+      debugLog(`workspace registry unavailable: ${String(error?.message ?? error)}`);
+    }
   }
-  // 3) explicit settings roots
+  // 2) explicit settings roots (user-opted extras, always honored)
   for (const root of getSettings().sc.roots) add(root);
   return [...roots.values()];
 }

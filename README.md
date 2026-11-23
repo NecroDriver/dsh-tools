@@ -63,12 +63,15 @@ A **资源控制** entry in the right sidebar's **开始 / Start** guide — the
 list that offers 工作区文件 / 新建终端 / 浏览网页 — opens a VSCode-style tab in
 the right sidebar pane:
 
-- Repositories are discovered from three sources, merged: the current
-  workspace directory hinted live by the client (the main-view session's
-  `cwd` — so the panel always scans the workspace you are actually in), the
-  durable workspace registry, and custom roots from Tools settings. Each root
-  is checked for being a repository itself first; otherwise the scan descends
-  up to three levels, skipping `node_modules`/build directories.
+- Discovery mirrors **the workspace you are actually in**: the client hints
+  the main-view session's `cwd` live, and that root is exclusive — no other
+  workspaces' directories are scanned. (When no hint can be obtained the host
+  falls back to the durable workspace registry.) Custom roots from Tools
+  settings are always merged on top. Each root is checked for being a
+  repository itself first; otherwise the scan descends up to three levels,
+  skipping `node_modules`/build directories. Switching the main-view
+  session/workspace rescans automatically, and the empty state lists the
+  roots that were actually scanned.
 - Repository groups start **collapsed** (only the repo name, branch and change
   count are shown); click a group header to expand its file list.
 - Changes are grouped per repository with branch name and count; each file row

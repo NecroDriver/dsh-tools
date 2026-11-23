@@ -110,6 +110,28 @@ r = await post('sc.repos', { roots: [hintRoot, 'relative/path', 42, null] });
 check('sc.repos ignores malformed hints',
   r.ok === true && (r.value?.repos ?? []).map((entry) => entry.name).join(',') === 'hinted',
   `repos=${JSON.stringify((r.value?.repos ?? []).map((entry) => entry.name))}`);
+
+// --- v0.6.5: client hints are EXCLUSIVE of the workspace registry (m03593) ---
+// The registry lists every workspace on the machine; merging it while the
+// client hints the current workspace showed sibling projects in the panel.
+const regRoot = mkdtempSync(join(tmpdir(), 'dsh-tools-sc-reg-'));
+initRepo(join(regRoot, 'registryrepo'));
+git(join(regRoot, 'registryrepo'), 'commit', '--allow-empty', '-m', 'registry: empty');
+const registryFiber = fibers.find((f) => Array.isArray(f.names) && f.names.includes('workspaceRegistry'));
+check('workspaceRegistry capture fiber registered', registryFiber !== undefined,
+  `fibers=${JSON.stringify(fibers.map((f) => f.names))}`);
+const regDispose = registryFiber.cb({ workspaceRegistry: { list: () => [{ path: regRoot }] } });
+r = await post('sc.repos', { roots: [hintRoot] });
+const exclNames = (r.value?.repos ?? []).map((entry) => entry.name).sort();
+check('sc.repos skips registry when client hints a root',
+  r.ok === true && exclNames.join(',') === 'hinted',
+  `repos=${JSON.stringify(exclNames)} roots=${JSON.stringify(r.value?.roots)}`);
+r = await post('sc.repos', {});
+const regNames = (r.value?.repos ?? []).map((entry) => entry.name).sort();
+check('sc.repos falls back to registry without client hints',
+  r.ok === true && regNames.join(',') === 'registryrepo',
+  `repos=${JSON.stringify(regNames)} roots=${JSON.stringify(r.value?.roots)}`);
+if (typeof regDispose === 'function') regDispose();
 await post('settings.set', { sc: { roots: [root] } });
 
 // --- sc.status: statuses M / A / D / R with orig ---

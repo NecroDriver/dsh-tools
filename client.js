@@ -69,7 +69,7 @@ window.__ModuleLoader__.load({
         scRefresh: '刷新',
         scLoading: '正在扫描仓库…',
         scEmpty: '未发现 git 仓库',
-        scEmptyHint: '自动扫描工作区目录；也可在工具设置里添加其他根目录。',
+        scEmptyHint: '仅扫描当前工作区；如需其他目录请在工具设置里添加根目录。',
         scFailed: '加载失败',
         scClean: '没有变更',
         scTruncated: '变更过多，仅显示前一部分',
@@ -155,7 +155,7 @@ window.__ModuleLoader__.load({
         scRefresh: 'Refresh',
         scLoading: 'Scanning repositories…',
         scEmpty: 'No git repositories found',
-        scEmptyHint: 'Workspace directories are scanned automatically; add more roots in Tools settings.',
+        scEmptyHint: 'Only the current workspace is scanned; add extra roots in Tools settings.',
         scFailed: 'Failed to load',
         scClean: 'No changes',
         scTruncated: 'Too many changes; showing the first part only',
@@ -357,6 +357,7 @@ window.__ModuleLoader__.load({
       '.dsh-tools-scBtn.is-primary{background:var(--dsw-alias-brand-primary,#3b82f6);border-color:transparent;color:#fff;}',
       '.dsh-tools-scBtn.is-primary:disabled{opacity:.6;}',
       '.dsh-tools-scNote{font-size:11.5px;color:var(--dsw-alias-label-secondary);min-width:0;word-break:break-word;}',
+      '.dsh-tools-scNote.is-dim{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));opacity:.75;font-family:var(--dsw-alias-font-family-mono,monospace);}',
       '.dsh-tools-scNote.is-error{color:var(--dsw-alias-state-error-primary);}',
       '.dsh-tools-scNote.is-ok{color:var(--dsw-alias-state-success-primary,#3fb950);}',
       '.dsh-tools-scFootHint{padding:2px 12px 0;font-size:11px;color:var(--dsw-alias-label-secondary);flex:none;}',
@@ -1077,11 +1078,12 @@ window.__ModuleLoader__.load({
           }
           ensureScStyles();
 
-          // Live workspace roots from the sessions store (the same source the
-          // workspace UI uses): the main-view session's cwd first, then any
-          // other retained sessions'. Passed to sc.repos as hints so the panel
-          // always scans the workspace the user is actually in, even when the
-          // host-side workspace registry is empty or not started.
+          // Live workspace root from the sessions store (the same source the
+          // workspace UI uses): ONLY the main-view session's cwd — the
+          // workspace the user is actually looking at. v0.6.5: hinting other
+          // retained sessions' directories too made the panel list sibling
+          // projects from unrelated workspaces (m03593: the reader workspace
+          // showed the parent's other git projects).
           let sessionsService = null;
           try {
             const sessionsFiber = ctx.inject(['sessions'], (scope) => {
@@ -1096,23 +1098,33 @@ window.__ModuleLoader__.load({
               const rows = Object.values(
                 sessionsService?.list?.getSnapshot?.()?.byId ?? {},
               );
-              const ordered = [
-                ...rows.filter((row) => (row?.retainedBy?.mainView ?? 0) > 0),
-                ...rows.filter((row) => (row?.retainedBy?.mainView ?? 0) <= 0),
-              ];
-              const seen = new Set();
-              const roots = [];
-              for (const row of ordered) {
-                const cwd = typeof row?.cwd === 'string' ? row.cwd.trim() : '';
-                if (cwd === '') continue;
-                const key = cwd.toLowerCase();
-                if (seen.has(key)) continue;
-                seen.add(key);
-                roots.push(cwd);
-                if (roots.length >= 4) break;
-              }
-              return roots;
+              const mainView = rows.find((row) => (row?.retainedBy?.mainView ?? 0) > 0
+                && typeof row?.cwd === 'string' && row.cwd.trim() !== '');
+              return mainView ? [mainView.cwd.trim()] : [];
             } catch { return []; }
+          };
+          // The sessions capture fiber can land slightly after a hot reload;
+          // wait briefly so the first sc.repos call still carries the
+          // main-view root instead of scanning nothing (observed as
+          // "roots=0" right after an in-place plugin swap).
+          const waitForSessions = async (timeoutMs = 2000) => {
+            const deadline = Date.now() + timeoutMs;
+            while (sessionsService === null && Date.now() < deadline) {
+              await new Promise((resolve) => { setTimeout(resolve, 50); });
+            }
+          };
+          const subscribeSessions = (onChange) => {
+            try {
+              const list = sessionsService?.list;
+              if (list && typeof list.subscribe === 'function') {
+                const unsubscribe = list.subscribe(onChange);
+                return typeof unsubscribe === 'function' ? unsubscribe : () => {};
+              }
+            } catch { /* fall through */ }
+            return () => {};
+          };
+          const sessionsSnapshot = () => {
+            try { return sessionsService?.list?.getSnapshot?.() ?? null; } catch { return null; }
           };
 
           const fmtError = (error, fallback) => {
@@ -1158,6 +1170,7 @@ window.__ModuleLoader__.load({
           const ScPanel = () => {
             const [repos, setRepos] = React.useState(null);      // null = loading
             const [reposError, setReposError] = React.useState('');
+            const [rootsHint, setRootsHint] = React.useState([]); // roots actually scanned
             const [statusMap, setStatusMap] = React.useState({}); // repo.id -> {branch,files,truncated,error}
             const [expanded, setExpanded] = React.useState({});     // repo.id -> true (default all collapsed)
             const [selected, setSelected] = React.useState({});   // repo.id -> Set<path>
@@ -1169,6 +1182,10 @@ window.__ModuleLoader__.load({
             const loadAll = React.useCallback(async () => {
               setRepos(null);
               setReposError('');
+              // Let the sessions capture settle (hot-reload race) so the scan
+              // targets the workspace the user is in, not nothing. Skipped
+              // entirely (zero extra microtask) once the service is captured.
+              if (sessionsService === null) await waitForSessions();
               let result;
               try {
                 result = await call('sc.repos', { roots: scClientRoots() });
@@ -1183,6 +1200,7 @@ window.__ModuleLoader__.load({
                 return;
               }
               const list = Array.isArray(result.value?.repos) ? result.value.repos : [];
+              setRootsHint(Array.isArray(result.value?.roots) ? result.value.roots : []);
               setRepos(list);
               const next = {};
               await Promise.all(list.map(async (repo) => {
@@ -1204,8 +1222,15 @@ window.__ModuleLoader__.load({
             }, []);
 
             // The pane only mounts this body while our tab is active, so
-            // mounting is exactly "the panel opened" — load immediately.
-            React.useEffect(() => { void loadAll(); }, [loadAll]);
+            // mounting is exactly "the panel opened" — load immediately. It
+            // also re-loads when the main-view session's cwd changes (the
+            // user switched workspace/session in this window), via the same
+            // sessions store the workspace UI reads.
+            const sessionsStore = typeof React.useSyncExternalStore === 'function'
+              ? React.useSyncExternalStore(subscribeSessions, sessionsSnapshot, sessionsSnapshot)
+              : null;
+            const mainViewCwd = React.useMemo(() => scClientRoots()[0] ?? '', [sessionsStore]);
+            React.useEffect(() => { void loadAll(); }, [loadAll, mainViewCwd]);
 
             const refreshRepo = async (repo) => {
               try {
@@ -1456,7 +1481,8 @@ window.__ModuleLoader__.load({
                   }, t('scRefresh')))) : null,
               repos !== null && reposError === '' && repos.length === 0 ? React.createElement('div', { className: 'dsh-tools-scState' },
                 React.createElement('span', { className: 'dsh-tools-scNote' }, t('scEmpty')),
-                React.createElement('span', { className: 'dsh-tools-scNote' }, t('scEmptyHint'))) : null,
+                React.createElement('span', { className: 'dsh-tools-scNote' }, t('scEmptyHint')),
+                rootsHint.length > 0 ? React.createElement('span', { className: 'dsh-tools-scNote is-dim' }, rootsHint.join(' · ')) : null) : null,
               repos !== null && reposError === '' ? repoGroups : null));
           };
 

@@ -1,8 +1,8 @@
-# dsh-tools 交付报告（2026-11-23，v0.6.4）
+# dsh-tools 交付报告（2026-11-23，v0.6.5）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.6.4 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.3 已装于 desktop profile 并上线验证：SC 面板 `sc.repos roots=5 … repos=13`。
+- 插件 `dsh-tools` v0.6.5 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.3 已装于 desktop profile 并上线验证：SC 面板 `sc.repos roots=5 … repos=13`。
 - **按钮重启已端到端验证成功**（v0.2.3 起多次实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
 - v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer。
@@ -12,6 +12,16 @@
 - v0.6.1：**「更多 → 重载插件」**——热重载入口（见下节），回应「每次都重启打断任务」的问题；实证 install 即热替换，零重启。
 - v0.6.2：**资源控制入口迁至右侧「开始」工具栏**（与 工作区文件/新建终端/浏览网页 同级），面板改为右栏标签页（见下节）。
 - v0.6.4：**输入框上方常用语悬浮条**（点击插入光标处、最多 5 条、工具设置可编辑）+ **热替换根因修复（ctx.effect teardown）** + **资源控制分组默认折叠**（见下节）。
+- v0.6.5：**资源控制只扫当前工作区**（主视图会话根互斥 registry，修复跨工作区父级/兄弟项目污染）+ 主视图切换自动重扫 + 空态显示实际扫描根（见下节）。
+
+## v0.6.5（2026-11-23）
+
+### SC 层级污染修复：客户端根与 registry 互斥（用户 m03593：「层级不对啊，我现在项目是在一个没有git的项目中，然后你在右边打开显示的是上层的同级目录结构」）
+
+- 根因（两层叠加）：①client `scClientRoots()` 除主视图行外还兜底收集「其余行」cwd（cap 4）→ 同窗口侧栏其他会话的 cwd（personal、AICX-V3、Elioo…）全被当根；②host `collectScRoots` 无条件叠加 workspace registry（= 本机所有工作区目录）。用户在 reader 工作区（非 git 项目）→ 面板显示父级兄弟项目。
+- 修复：client 根 = **仅主视图会话 cwd（单根）**；host = 客户端有根时 EXCLUSIVE（完全跳过 registry），无根才回退 registry（host-only/无头调用）；settings 自定义根永远合并（用户显式配置）。目录事实核查：reader 无 .git、app/design 均非 git → 修复后 reader 工作区面板为空态（正确语义）；截图「dsh-tools×2」实为 dsh-tools + dsh-im-notify（OCR 误差），无重复 bug。
+- 附带：`waitForSessions`（热更新后 sessions 捕获竞态，最多 2s/50ms 轮询，服务已捕获时零开销——否则会平移一个微任务导致面板加载时序变化，渲染测试捕捉到该回归）；面板经 `list.subscribe` + `useSyncExternalStore` 订阅 sessions store，主视图会话/工作区切换自动重扫；空态显示实际扫描根（host 响应 `value.roots`）。
+- 测试：test-sc.mjs +3（假 registry 注入 `fiber.cb({workspaceRegistry:…})`：有 hint 时 regRoot 仓不出现/无 hint 时出现/capture fiber 存在）20 项过；test-client-render.cjs 改造 sessions stub（mainView 行 cwd=reader + 普通行 cwd=personal → payload.roots===['D:/Workspace/personal/reader']，快照对象固定引用避免 useSyncExternalStore 不稳定）36 项过；smoke 32 项、two-stage 回归过。
 
 ## v0.6.4（2026-11-23）
 

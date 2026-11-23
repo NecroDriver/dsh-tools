@@ -233,10 +233,15 @@ check('sidebarRightTabs fiber requested', tabsFiber !== undefined);
 tabsFiber.cb({ sidebarRightTabs: fakeTabs });
 const sessionsFiber = fibers.find((f) => f.names.includes('sessions'));
 check('sessions fiber requested for root hints', sessionsFiber !== undefined);
-sessionsFiber.cb({ sessions: { list: { getSnapshot: () => ({ byId: {
-  s1: { id: 's1', cwd: 'D:/Workspace/personal', retainedBy: { mainView: 2 } } ,
-  s2: { id: 's2', cwd: 'D:/Workspace/personal', retainedBy: {} },
-} }) } } });
+// Stable snapshot object — the real store caches; a fresh object per call
+// would look like an ever-changing snapshot to useSyncExternalStore.
+const fakeSessionsSnapshot = {
+  byId: {
+    s1: { id: 's1', cwd: 'D:/Workspace/personal/reader', retainedBy: { mainView: 2 } },
+    s2: { id: 's2', cwd: 'D:/Workspace/personal', retainedBy: {} },
+  },
+};
+sessionsFiber.cb({ sessions: { list: { getSnapshot: () => fakeSessionsSnapshot } } });
 check('tab type registered once', fakeTabs.defs.length === 1);
 const def = fakeTabs.defs[0];
 check('type id/kind', def?.id === 'dsh-tools-sc' && def?.kind === 'dsh-tools-sc');
@@ -269,7 +274,9 @@ const runEffects = async () => {
   const step = async () => { tree = render(); await runEffects(); tree = render(); };
   check('tab body rendered', findAll(tree, byClass('dsh-tools-scTab'))[0] !== undefined);
   const reposCall = calls.find((c) => c.method === 'sc.repos');
-  check('sc.repos got session cwd hint', JSON.stringify(reposCall?.payload?.roots) === JSON.stringify(['D:/Workspace/personal']));
+  check('sc.repos hints only the main-view session cwd (m03593)',
+    JSON.stringify(reposCall?.payload?.roots) === JSON.stringify(['D:/Workspace/personal/reader']),
+    `roots=${JSON.stringify(reposCall?.payload?.roots)}`);
   check('repo group shown', findAll(tree, byClass('dsh-tools-scRepoName'))[0]?.children[0] === 'repo-a');
   check('branch chip', findAll(tree, byClass('dsh-tools-scBranch'))[0]?.children[0] === 'main');
   // Default collapsed (user request 2026-11-23): no file rows until expanded.
