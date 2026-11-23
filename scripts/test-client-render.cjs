@@ -19,9 +19,27 @@ function fakeElement(tag) {
     style: {},
     dataset: {},
     children: [],
+    parentElement: null,
     listeners: {},
+    className: '',
+    _text: '',
     append(...nodes) { this.children.push(...nodes); },
-    remove() {},
+    appendChild(node) { this.children.push(node); node.parentElement = this; },
+    insertBefore(node, ref) {
+      const i = ref ? this.children.indexOf(ref) : -1;
+      if (i === -1) this.children.push(node); else this.children.splice(i, 0, node);
+      node.parentElement = this;
+    },
+    replaceChildren(...nodes) {
+      for (const child of this.children) child.parentElement = null;
+      this.children.length = 0;
+      for (const node of nodes) { this.children.push(node); node.parentElement = this; }
+    },
+    remove() {
+      const p = this.parentElement;
+      if (p != null) { const i = p.children.indexOf(this); if (i !== -1) p.children.splice(i, 1); }
+      this.parentElement = null;
+    },
     setAttribute() {},
     removeAttribute() {},
     addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); },
@@ -29,6 +47,11 @@ function fakeElement(tag) {
     querySelector() { return null; },
     querySelectorAll() { return []; },
     dispatchEvent() {},
+    focus() {},
+    closest() { return null; },
+    get firstChild() { return this.children[0] ?? null; },
+    get textContent() { return this._text; },
+    set textContent(v) { this._text = String(v ?? ''); this.children.length = 0; },
     get innerText() { return ''; },
   };
 }
@@ -36,7 +59,7 @@ function fakeElement(tag) {
 const windowListeners = {};
 const documentListeners = {};
 const execCommands = [];
-const moInstances = [];   // MutationObserver stub instances (phrase-bar popup avoidance)
+const moInstances = [];   // MutationObserver stub instances (phrase-row re-insert guard)
 const sandbox = {
   console,
   setTimeout: (fn) => { queueMicrotask(fn); return 0; },
@@ -176,6 +199,12 @@ const stubs = {
     phrases: ['使用 skill 优化', '继续上面的方案'],
   } } }),
   'models.list': () => ({ ok: true, value: { providers: [], defaultSelection: null, override: null } }),
+  'settings.set': (payload) => ({ ok: true, value: { settings: {
+    features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true, phrases: true },
+    model: { provider: '', model: '' },
+    sc: { roots: [] },
+    phrases: Array.isArray(payload?.phrases) ? payload.phrases : [],
+  } } }),
   'sc.repos': () => ({ ok: true, value: { roots: [], repos: [
     { id: 'C:/t/repo-a', name: 'repo-a', path: 'C:/t/repo-a' },
   ], truncated: false } }),
@@ -192,7 +221,7 @@ const stubs = {
 const call = async (method, payload) => {
   calls.push({ method, payload });
   await new Promise((resolve) => setImmediate(resolve));
-  return (stubs[method] ?? (() => ({ ok: false, error: { code: 'unknown', message: method, details: {} } })))();
+  return (stubs[method] ?? (() => ({ ok: false, error: { code: 'unknown', message: method, details: {} } })))(payload);
 };
 
 const registrations = [];
@@ -346,42 +375,49 @@ const runEffects = async () => {
   await settle(); await settle();
   check('push called', calls.some((c) => c.method === 'sc.push'));
 
-  // 7) quick phrases: overlay bar registered, chips render, click inserts at caret
+  // 7) quick phrases: hidden overlay host injects an in-card row above the
+  //    draft editor; pills build from the store and click inserts at the caret
   const phraseReg = registrations.find((r) => r.slot === 'conversation.input.overlay' && r.id === 'dsh-tools-phrases');
-  check('phrase bar slot registered', phraseReg !== undefined);
+  check('phrase host slot registered', phraseReg !== undefined);
   const phraseTree = materialize(react, react.createElement(phraseReg.render, {}), 'ph', []);
-  const chips = findAll(phraseTree, byClass('dsh-tools-phrase'));
-  check('two phrase chips render', chips.length === 2 && chips[0].children[0] === '使用 skill 优化');
+  const hostSpan = findAll(phraseTree, byClass('dsh-tools-phraseHost'))[0];
+  check('bootstrap host renders hidden', hostSpan !== undefined
+    && hostSpan.props.style?.display === 'none');
+  // Simulate the real DOM chain: host span -> overlay anchor -> composer card,
+  // with the draft editor nested one level inside the card.
+  const fakeEd = fakeElement('div');
+  const fakeEdHost = fakeElement('div'); fakeEdHost.appendChild(fakeEd);
+  const fakeCardEl = fakeElement('div');
+  fakeCardEl.querySelector = (sel) => (String(sel).includes('contenteditable') ? fakeEd : null);
+  const fakeAnchorEl = fakeElement('div');
+  const fakeSpanEl = fakeElement('span');
+  fakeAnchorEl.appendChild(fakeSpanEl);
+  fakeCardEl.appendChild(fakeAnchorEl);
+  fakeCardEl.appendChild(fakeEdHost);
+  hostSpan.props.ref(fakeSpanEl);
+  const phraseRow = fakeCardEl.children.find((c) => c.className === 'dsh-tools-phraseBar');
+  check('in-card phrase row inserted above the draft editor',
+    phraseRow !== undefined && phraseRow.parentElement === fakeCardEl
+    && fakeCardEl.children.indexOf(phraseRow) < fakeCardEl.children.indexOf(fakeEdHost));
+  check('two phrase pills built', phraseRow !== undefined && phraseRow.children.length === 2
+    && phraseRow.children[0].textContent === '使用 skill 优化'
+    && phraseRow.style.display === '');
   execCommands.length = 0;
-  const fakeEditor = { focus() {} };
-  const fakeCard = { querySelector: () => fakeEditor };
-  chips[0].props.onClick({ currentTarget: { closest: (sel) => (sel === '[data-composer-card]' ? fakeCard : null) } });
-  check('chip click inserts text at caret (no selectAll)',
+  const pillBtn = phraseRow.children[0];
+  pillBtn.closest = (sel) => (sel === '[data-composer-card]' ? fakeCardEl : null);
+  pillBtn.listeners.click[0]();
+  check('pill click inserts text at caret (no selectAll)',
     execCommands.length === 1 && execCommands[0][0] === 'insertText' && execCommands[0][2] === '使用 skill 优化');
 
-  // 7b) popup avoidance: a sibling entry in the overlay anchor hides the bar,
-  //     and it restores itself once the sibling is gone (user report 2026-11-23)
-  const phraseBarNode = findAll(phraseTree, byClass('dsh-tools-phraseBar'))[0];
-  const fakeAnchor = { getAttribute: (n) => (n === 'data-composer-overlay' ? '' : null), children: [] };
-  const fakeBar = { parentElement: fakeAnchor, nodeType: 1 };
-  fakeAnchor.children.push(fakeBar);
-  phraseBarNode.props.ref(fakeBar);
-  const barObserver = moInstances[moInstances.length - 1];
-  check('phrase bar watches the overlay anchor', barObserver !== undefined && barObserver.live === true);
-  fakeAnchor.children.push({ nodeType: 1 });                       // sibling popup shell appears
-  barObserver.trigger();
-  let busyTree = materialize(react, react.createElement(phraseReg.render, {}), 'ph', []);
-  const busyBar = findAll(busyTree, byClass('dsh-tools-phraseBar'))[0];
-  check('sibling popup hides the phrase bar',
-    busyBar !== undefined && /is-hidden/.test(String(busyBar.props.className))
-    && findAll(busyTree, byClass('dsh-tools-phrase')).length === 0);
-  fakeAnchor.children.pop();                                        // popup closes
-  barObserver.trigger();
-  const restTree = materialize(react, react.createElement(phraseReg.render, {}), 'ph', []);
-  check('phrase bar restores after popup closes',
-    findAll(restTree, byClass('dsh-tools-phrase')).length === 2);
-  restTree && findAll(restTree, byClass('dsh-tools-phraseBar'))[0]?.props.ref(null);
-  check('bar unmount disconnects the observer', barObserver.live === false);
+  // 7b) re-insert guard: a React re-render that drops the row puts it back
+  const guardObserver = moInstances[moInstances.length - 1];
+  check('row guard watches the card', guardObserver !== undefined && guardObserver.live === true);
+  fakeCardEl.children.splice(fakeCardEl.children.indexOf(phraseRow), 1);
+  phraseRow.parentElement = null;
+  guardObserver.trigger();
+  check('dropped row re-inserts above the draft editor',
+    fakeCardEl.children.indexOf(phraseRow) !== -1
+    && fakeCardEl.children.indexOf(phraseRow) < fakeCardEl.children.indexOf(fakeEdHost));
 
   // 8) settings panel: phrases editor round-trips through settings.set
   const settingsReg = registrations.find((r) => r.slot === 'settings.section' && r.id === 'dsh-tools');
@@ -394,6 +430,36 @@ const runEffects = async () => {
   const phraseAddBtn = findAll(panelTree, byClass('dsh-tools-scBtn')).find((b) => b.children.some((c) => c.children?.[0] === '添加常用语'));
   check('phrase add button present', phraseAddBtn !== undefined);
 
+  // 8b) phrase editor round-trip drives the live row (store sync)
+  const removeBtns = findAll(panelTree, byClass('dsh-tools-scRootRemove'));
+  check('phrase remove buttons present', removeBtns.length === 2);
+  removeBtns[0].props.onClick();
+  panelTree = materialize(react, react.createElement(settingsReg.render, {}), 'sp', []);
+  findAll(panelTree, byClass('dsh-tools-primary'))[0].props.onClick();
+  await settle(); await settle();
+  const setCalls = calls.filter((c) => c.method === 'settings.set');
+  const lastSet = setCalls[setCalls.length - 1];
+  check('saving one removed phrase round-trips',
+    Array.isArray(lastSet?.payload?.phrases) && lastSet.payload.phrases.length === 1);
+  check('row shrinks to one pill', phraseRow.children.length === 1 && phraseRow.style.display === '');
+  findAll(panelTree, byClass('dsh-tools-scRootRemove'))[0].props.onClick();
+  panelTree = materialize(react, react.createElement(settingsReg.render, {}), 'sp', []);
+  findAll(panelTree, byClass('dsh-tools-primary'))[0].props.onClick();
+  await settle(); await settle();
+  const setCalls2 = calls.filter((c) => c.method === 'settings.set');
+  check('saving empty phrases round-trips',
+    setCalls2[setCalls2.length - 1]?.payload?.phrases?.length === 0);
+  check('empty store hides the in-card row', phraseRow.style.display === 'none');
+  const addBtn2 = findAll(panelTree, byClass('dsh-tools-scBtn')).find((b) => b.children.some((c) => c?.children?.[0] === '添加常用语'));
+  addBtn2.props.onClick();
+  panelTree = materialize(react, react.createElement(settingsReg.render, {}), 'sp', []);
+  findAll(panelTree, byClass('dsh-tools-phraseInput'))[0].props.onChange({ target: { value: '再来一条' } });
+  panelTree = materialize(react, react.createElement(settingsReg.render, {}), 'sp', []);
+  findAll(panelTree, byClass('dsh-tools-primary'))[0].props.onClick();
+  await settle(); await settle();
+  check('re-added phrase shows in the in-card row',
+    phraseRow.style.display === '' && phraseRow.children.length === 1
+    && phraseRow.children[0].textContent === '再来一条');
   // 9) dispose unregisters the type
   dispose();
   check('type disposed on unload', fakeTabs.disposed[0]?.gone === true);

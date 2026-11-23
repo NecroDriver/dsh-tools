@@ -279,15 +279,14 @@ window.__ModuleLoader__.load({
       '.dsh-tools-primary:disabled{opacity:.6;}',
       '.dsh-tools-note{font-size:12.5px;color:var(--dsw-alias-label-secondary);}',
       '.dsh-tools-note.is-error{color:var(--dsw-alias-state-error-primary);}',
-      // ---- quick phrases bar (conversation.input.overlay slot) ----
-      // The overlay anchor is a zero-height absolute strip pinned to the top of
-      // the composer card. Official convention (InputBar.module.css): entries
-      // position themselves with bottom:100% + gap; the strip is shared with
-      // transient popup shells (slash menu, popup select), so the bar also
-      // hides itself while a sibling popup is open (see attachBarNode).
-      '.dsh-tools-phraseBar{position:absolute;left:0;right:0;bottom:100%;display:flex;gap:6px;padding:0 2px 8px;overflow-x:auto;scrollbar-width:none;z-index:6;}',
+      // ---- quick phrases row (mounted in flow inside the composer card) ----
+      // v0.6.7: the row renders in normal flow inside the composer card,
+      // directly above the draft editor. It used to float above the card
+      // through the overlay anchor (bottom:100% + gap), but that band is
+      // shared with DSH popup shells and still read as overlapping the card
+      // edge (user feedback 2026-11-23: "感觉没变化").
+      '.dsh-tools-phraseBar{display:flex;gap:6px;padding:6px 12px 0;overflow-x:auto;scrollbar-width:none;}',
       '.dsh-tools-phraseBar::-webkit-scrollbar{display:none;}',
-      '.dsh-tools-phraseBar.is-hidden{display:none;}',
       '.dsh-tools-phrase{flex:none;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;height:24px;padding:0 11px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:var(--dsh-specific-input-major,var(--dsw-alias-bg-layer-1,#fff));box-shadow:var(--dsw-elevation-soft,none);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:22px;cursor:pointer;}',
       '.dsh-tools-phrase:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary,#3b82f6);}',
       '.dsh-tools-phrase:focus-visible{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary,#3b82f6);outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:1px;}',
@@ -758,13 +757,17 @@ window.__ModuleLoader__.load({
           return effectBody();
         };
 
-        // ---- quick phrases bar (slot conversation.input.overlay) ----
-        // Floating pill row above the composer; click inserts at the caret
-        // (user request 2026-11-23). Reads phraseStore so the settings panel
-        // can refresh every mounted bar without re-registering the slot.
-        // Overlap avoidance (user report 2026-11-23): the overlay strip is
-        // shared with transient popup shells (slash menu / popup select), so
-        // the bar watches its anchor and hides while a sibling popup is open.
+        // ---- quick phrases row (in flow inside the composer card) ----
+        // Click inserts at the caret (user request 2026-11-23). Reads
+        // phraseStore so the settings panel can refresh every mounted row
+        // without re-registering the slot.
+        // Placement (user report 2026-11-23 "感觉没变化"): the overlay anchor
+        // band is shared with DSH popup shells, so floating above the card
+        // kept reading as an overlap. Instead the overlay slot registers an
+        // invisible bootstrap <span>; from it we climb to the composer card
+        // and insert a plain-DOM row directly above the draft editor, in
+        // normal flow. React leaves foreign nodes alone, and a
+        // MutationObserver re-inserts the row if a re-render ever drops it.
         const registerPhrasesBar = () => {
           if (React === null || typeof ctx?.slots?.register !== 'function'
             || typeof ctx.slots.inject !== 'function') {
@@ -772,81 +775,111 @@ window.__ModuleLoader__.load({
           }
           ensureGenStyles();
 
-          let barNode = null;
-          let barObserver = null;
-          let busySetter = null;
-          const setOverlayBusy = (busy) => { if (busySetter !== null) busySetter(busy); };
-          const detachBarObserver = () => {
-            if (barObserver !== null) {
-              try { barObserver.disconnect(); } catch { /* already gone */ }
-              barObserver = null;
-            }
-          };
-          const findOverlayAnchor = (node) => {
-            let cur = node;
-            let hops = 0;
-            while (cur !== null && hops < 4) {
-              if (typeof cur.getAttribute === 'function'
-                && cur.getAttribute('data-composer-overlay') != null) return cur;
-              cur = cur.parentElement ?? null;
-              hops += 1;
-            }
-            return null;
-          };
-          // Stable ref callback: React calls it once per mount/unmount, so the
-          // observer lifecycle follows the bar element exactly.
-          const attachBarNode = (node) => {
-            detachBarObserver();
-            barNode = node;
-            if (node === null) return;
-            const anchor = findOverlayAnchor(node);
-            if (anchor === null) return;
-            let mine = node;
-            while (mine.parentElement != null && mine.parentElement !== anchor) mine = mine.parentElement;
-            const kids = () => anchor.childNodes ?? anchor.children ?? [];
-            const isBusy = () => {
-              for (const kid of kids()) {
-                if (kid == null || kid === mine) continue;
-                if (kid.nodeType != null && kid.nodeType !== 1) continue;
-                return true;
-              }
-              return false;
-            };
-            setOverlayBusy(isBusy());
-            if (typeof MutationObserver !== 'function') return;
-            barObserver = new MutationObserver(() => setOverlayBusy(isBusy()));
-            barObserver.observe(anchor, { childList: true });
+          let rowEl = null;
+          let cardEl = null;
+          let reinsertGuard = null;
+          let unsubscribe = null;
+
+          const buildPill = (text) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'dsh-tools-phrase';
+            btn.textContent = text;
+            btn.title = `${text}\n${t('phrasesChipTitle')}`;
+            btn.setAttribute('aria-label', text);
+            btn.addEventListener('click', () => { insertPhraseAtCaret(btn, text); });
+            return btn;
           };
 
-          const PhrasesBar = () => {
-            const items = typeof React.useSyncExternalStore === 'function'
-              ? React.useSyncExternalStore(phraseStore.subscribe, phraseStore.snapshot, phraseStore.snapshot)
-              : phraseStore.snapshot();
-            const [overlayBusy, setBusy] = React.useState(false);
-            busySetter = setBusy;
-            if (featureFlags.phrases !== true || items.length === 0) return null;
-            if (overlayBusy) {
-              // Keep the element (and observer) alive while a popup owns the
-              // strip; it restores itself when the popup closes.
-              return React.createElement('div', { className: 'dsh-tools-phraseBar is-hidden', ref: attachBarNode, 'aria-hidden': 'true' });
+          const syncPills = () => {
+            if (rowEl === null) return;
+            const items = phraseStore.snapshot();
+            const show = featureFlags.phrases === true && items.length > 0;
+            rowEl.style.display = show ? '' : 'none';
+            if (!show) return;
+            const pills = items.map((text) => buildPill(text));
+            if (typeof rowEl.replaceChildren === 'function') {
+              rowEl.replaceChildren(...pills);
+            } else {
+              rowEl.textContent = '';
+              for (const pill of pills) rowEl.appendChild(pill);
             }
-            return React.createElement('div', { className: 'dsh-tools-phraseBar', ref: attachBarNode },
-              items.map((text, index) => React.createElement('button', {
-                key: `${index}-${text}`,
-                type: 'button',
-                className: 'dsh-tools-phrase',
-                title: `${text}\n${t('phrasesChipTitle')}`,
-                'aria-label': text,
-                onClick: (event) => { insertPhraseAtCaret(event.currentTarget, text); },
-              }, text)));
+          };
+
+          const insertRow = () => {
+            if (rowEl === null || cardEl === null
+              || typeof cardEl.querySelector !== 'function') return;
+            if (rowEl.parentElement === cardEl) return;
+            const editor = cardEl.querySelector('[contenteditable="true"]')
+              ?? cardEl.querySelector('[contenteditable]');
+            if (editor == null) return; // hero variant: no draft editor yet
+            let host = editor;
+            while (host != null && host.parentElement !== cardEl) host = host.parentElement;
+            if (host != null) {
+              cardEl.insertBefore(rowEl, host);
+            } else {
+              cardEl.appendChild(rowEl);
+            }
+          };
+
+          const teardownRow = () => {
+            if (reinsertGuard !== null) {
+              try { reinsertGuard.disconnect(); } catch { /* already gone */ }
+              reinsertGuard = null;
+            }
+            if (unsubscribe !== null) {
+              try { unsubscribe(); } catch { /* already gone */ }
+              unsubscribe = null;
+            }
+            if (rowEl !== null && typeof rowEl.remove === 'function') {
+              try { rowEl.remove(); } catch { /* already gone */ }
+            }
+            rowEl = null;
+            cardEl = null;
+          };
+
+          // Stable ref callback: React calls it once per mount/unmount, so
+          // the injected row's lifecycle follows the bootstrap span exactly.
+          const attachBootstrap = (node) => {
+            teardownRow();
+            if (node === null) return;
+            const anchor = node.parentElement ?? null;
+            const card = anchor !== null ? anchor.parentElement ?? null : null;
+            if (card === null || typeof card.querySelector !== 'function') return;
+            rowEl = document.createElement('div');
+            rowEl.className = 'dsh-tools-phraseBar';
+            cardEl = card;
+            insertRow();
+            syncPills();
+            unsubscribe = phraseStore.subscribe(syncPills);
+            if (typeof MutationObserver === 'function') {
+              reinsertGuard = new MutationObserver(() => { insertRow(); });
+              reinsertGuard.observe(card, { childList: true });
+            }
+          };
+
+          const PhrasesHost = () => {
+            if (featureFlags.phrases !== true) return null;
+            // Invisible mount point inside the overlay anchor. The visible
+            // row lives in the card flow (see attachBootstrap); the span only
+            // gives us a node to climb from and stays display:none forever.
+            return React.createElement('span', {
+              ref: attachBootstrap,
+              className: 'dsh-tools-phraseHost',
+              style: { display: 'none' },
+              'aria-hidden': 'true',
+            });
           };
 
           const effectBody = () => ctx.slots.inject('conversation.input.overlay', () => {
             const unregister = ctx.slots.register(
               { name: 'conversation.input.overlay', id: 'dsh-tools-phrases', order: 10 },
-              () => React.createElement(PhrasesBar),
+              () => React.createElement(PhrasesHost),
             );
-            return () => { try { unregister(); } catch { /* already gone */ } };
+            return () => {
+              try { unregister(); } catch { /* already gone */ }
+              teardownRow();
+            };
           });
           if (typeof ctx.effect === 'function') {
             return ctx.effect(effectBody, 'dsh-tools: phrase bar');

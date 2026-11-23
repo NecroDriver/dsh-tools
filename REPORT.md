@@ -1,8 +1,8 @@
-# dsh-tools 交付报告（2026-11-23，v0.6.6）
+# dsh-tools 交付报告（2026-11-23，v0.6.7）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.6.6 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.5 已上线验证：重启后 `webServer route mounted`（无 duplicate——ctx.effect 修复生效）、`sc.repos roots=1` 随会话切换、用户已配置两条常用语。
+- 插件 `dsh-tools` v0.6.7 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.6 已热替换上线（log 无 duplicate、dev.ping=v0.6.6）+ 用户重启后仍报「感觉没变化」——v0.6.6 的 bottom:100% 与旧 translateY(-100%) 数学上同位，仅差 1px padding，判断正确。
 - **按钮重启已端到端验证成功**（v0.2.3 起多次实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
 - v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer。
@@ -13,7 +13,20 @@
 - v0.6.2：**资源控制入口迁至右侧「开始」工具栏**（与 工作区文件/新建终端/浏览网页 同级），面板改为右栏标签页（见下节）。
 - v0.6.4：**输入框上方常用语悬浮条**（点击插入光标处、最多 5 条、工具设置可编辑）+ **热替换根因修复（ctx.effect teardown）** + **资源控制分组默认折叠**（见下节）。
 - v0.6.5：**资源控制只扫当前工作区**（主视图会话根互斥 registry，修复跨工作区父级/兄弟项目污染）+ 主视图切换自动重扫 + 空态显示实际扫描根（见下节）。
-- v0.6.6：**常用语条重叠修复**（官方 `bottom:100%`+gap 定位 + 弹层避让）+ a11y（aria-label/focus-visible/pointer/按压反馈）（见下节）。
+- v0.6.6：**常用语条重叠修复第一轮**（官方 `bottom:100%`+gap 定位 + 弹层避让 + a11y）——定位数学上与旧版同位，用户无感（详见 v0.6.7 节）。
+- v0.6.7：**常用语条改卡片内文档流**——彻底放弃悬浮定位（见下节）。
+
+## v0.6.7（2026-11-23）
+
+### 常用语条改「卡片内文档流」（用户 m03888：「重启了，感觉没变化啊」）
+
+- 背景：v0.6.6 把悬浮条改成官方 `bottom:100%`+gap 定位并加了弹层避让——热替换+重启后用户仍无感。数学复盘：`top:0;transform:translateY(-100%)` 与 `bottom:100%` 都把 pill 行底边放在卡片顶边，仅 padding 7→8px 差 1px；避让修复只在弹出层打开瞬间可见。**结论：悬浮方案本身是问题——换位置，不再调间距。**
+- 槽位调研（决定性，`dsh-client-ui-conversation` 源码）：composer 槽位全景=`conversation.input.attachments`(**single** 槽，插件注册会顶掉官方附件 UI，不可用)/`overlay`(list，即悬浮带)/`left`/`right`(list，但在底部操作行)/`permission`/`plan`/`model`/`activity`(single)/`composer.dock`。**不存在「卡片内输入框上方」的官方 list 槽** → 文档流位置只能自取。
+- 方案（纯 DOM 注入）：overlay 槽注册一个隐形 bootstrap `<span>`（`PhrasesHost`，`display:none` + `aria-hidden`）；ref 回调 `attachBootstrap` 从 span 爬到 composer card（`anchor.parentElement.parentElement`），在 card 内找 `[contenteditable="true"]` 沿 parentElement 爬到 card 直接子节点，`insertBefore(rowEl, host)` 把 pill 行插到输入区正上方、随文档流。React 不碰外来节点；`MutationObserver(card childList)` 在 React 重渲染丢节点时自动重插（`rowEl.parentElement!==cardEl` 才插）。hero 态（无编辑器）静默跳过。
+- pill 行=纯 DOM（`document.createElement` + `addEventListener`，不经 React/ReactDOM）：`phraseStore.subscribe(syncPills)` 驱动重建（`replaceChildren`）；0 条或 flag 关→`display:none`；点击→`insertPhraseAtCaret`（不变：card→contenteditable→focus+`execCommand insertText`）。清理：ref(null)/槽注销→移除行+退订+断开 observer。
+- CSS：`.dsh-tools-phraseBar{display:flex;gap:6px;padding:6px 12px 0;overflow-x:auto;scrollbar-width:none}`（去 absolute/bottom/z-index/is-hidden）；pill 样式沿用 v0.6.6 的 a11y 三件套。
+- 测试排障记录（本轮唯一深坑）：面板保存回程两项 FAIL——DBG 探针显示保存后 store 收到 `[]` 而非保存值 → 根因在 **test-client-render.cjs 的 call 桩 `(stubs[method] ?? …)()` 调用 stub 时不传 payload**，echo 型 `settings.set` 桩恒见 `payload=undefined` 回 `[]` → 修复为 `(stubs[method] ?? …)(payload)`。两个探针（client.js phraseStore.set/syncPills + 测试内 DBG 行）已全部移除。
+- 测试：test-client-render.cjs 重写步骤 7（bootstrap ref 手动触发+fake DOM 链（fakeCardEl.querySelector→fakeEd→fakeEdHost）/行插在编辑器宿主前/2 pills/点击插入/守卫 observer 重插/ref(null) 卸载）+ 8b 面板回程（删 1 条保存→行缩到 1 pill→删空→行隐藏→再加→重现）46 项过；smoke 32、test-sc 20、two-stage 回归过。
 
 ## v0.6.6（2026-11-23）
 

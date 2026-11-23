@@ -89,14 +89,16 @@ the right sidebar pane:
 
 ### 6. Quick phrases (composer)
 
-A bar of **常用语 / quick phrase** pills floats just above the composer. Clicking
-a pill inserts that phrase at the caret (focuses the editor first — it never
-replaces the whole draft). Up to five phrases are shown; the bar hides itself
-when none are configured. Phrases are edited in Tools settings (add, edit
-inline, remove) and persisted on the Host. The bar positions itself with the
-official overlay convention (`bottom:100%` + gap against the composer card) and
-steps aside — hiding until the popup closes — whenever a sibling popup shell
-(slash menu, popup select) shares the overlay strip.
+A bar of **常用语 / quick phrase** pills sits inside the composer card, directly
+above the input field. Clicking a pill inserts that phrase at the caret
+(focuses the editor first — it never replaces the whole draft). Up to five
+phrases are shown; the bar hides itself when none are configured. Phrases are
+edited in Tools settings (add, edit inline, remove) and persisted on the Host.
+The bar lives in the card's normal flow (it never floats over the message list
+or fights DSH popups): a hidden bootstrap span registers into the overlay slot,
+climbs to the composer card, and inserts a plain-DOM row right above the draft
+editor; a MutationObserver re-inserts the row if a React re-render ever drops
+it.
 
 ### 7. Tools settings (Settings → Tools)
 
@@ -121,9 +123,10 @@ editor (add via the native directory picker, remove individually).
   all PIDs to exit, relaunches the executable, and confirms the relaunch. It
   logs to `%TEMP%\dsh-tools-restart.log`.
 - Generate/Optimize register into the `conversation.input.right` slot; the
-  quick-phrases bar into `conversation.input.overlay` (official `bottom:100%` +
-  gap convention, with popup avoidance via a MutationObserver on the overlay
-  anchor); Source Control registers a
+  quick-phrases bootstrap registers into `conversation.input.overlay` and
+  injects a plain-DOM pill row in normal flow inside the composer card, above
+  the draft editor (re-inserted by a MutationObserver if React drops it);
+  Source Control registers a
   right-sidebar tab type through the `sidebarRightTabs` service (guide entry +
   tab body in `sidebar.right.pane.tab`); the settings section into
   `settings.section`.
