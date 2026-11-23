@@ -699,8 +699,20 @@ window.__ModuleLoader__.load({
           ];
 
           // Native directory picker (Client uiWorkspace service), when present.
+          // ctx.get on an undeclared service may throw (Cordis inject rules),
+          // so fall back to a runtime child fiber capture.
           let pickDirectory = null;
           try { pickDirectory = ctx.get('uiWorkspace')?.pickDirectory ?? null; } catch { pickDirectory = null; }
+          if (typeof pickDirectory !== 'function') {
+            try {
+              const pickerFiber = ctx.inject(['uiWorkspace'], (scope) => {
+                pickDirectory = typeof scope?.uiWorkspace?.pickDirectory === 'function' ? scope.uiWorkspace.pickDirectory : null;
+              });
+              if (pickerFiber && typeof pickerFiber.dispose === 'function') {
+                keep(() => { try { pickerFiber.dispose(); } catch { /* already disposed */ } });
+              }
+            } catch { /* client runtime without callback inject — picker stays unavailable */ }
+          }
 
           const ToolsPanel = () => {
             const [flags, setFlags] = React.useState({ ...featureFlags });
