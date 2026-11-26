@@ -18,9 +18,9 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -35,7 +35,7 @@ export const inject = ['webServer', 'connection'];
 
 // Single source of truth for the running generation; dev.ping reports it so the
 // Client can confirm a hot reload actually swapped this module.
-const MODULE_VERSION = 'v0.7.11';
+const MODULE_VERSION = 'v0.8.0';
 
 const RPC_KEY = 'dsh-tools';
 const HELPER_PATH = join(tmpdir(), 'dsh-tools-restart.ps1');
@@ -348,6 +348,7 @@ const METHODS = {
   'sc.commit': handleScCommit,
   'sc.push': handleScPush,
   'sc.pull': handleScPull,
+  'sc.revert': handleScRevert,
   'sc.prisma': handleScPrisma,
   'usage.today': handleUsageToday,
 };
@@ -923,7 +924,11 @@ export function parsePorcelain(raw) {
 }
 
 async function currentChanges(repo) {
-  const result = await runGit(repo, ['status', '--porcelain=v1', '-z']);
+  // -uall lists every untracked FILE instead of collapsing a whole untracked
+  // directory into one "dir/" entry (v0.8.0). Collapsed entries could never
+  // be diffed, reverted, or meaningfully committed one file at a time; the
+  // SC_MAX_FILES display cap keeps huge untracked trees cheap on the client.
+  const result = await runGit(repo, ['status', '--porcelain=v1', '-z', '-uall']);
   return parsePorcelain(result.stdout);
 }
 
@@ -1104,6 +1109,78 @@ async function handleScCommit(payload) {
   } catch { /* hash is informational */ }
   debugLog(`sc.commit repo=${repo} files=${selection.selected.length} → ${hash}`);
   return { ok: true, value: { commit: hash, count: selection.selected.length } };
+}
+
+// v0.8 「撤销改动」— drop selected working-copy changes. Modified/deleted
+// files (M/D, plus a rename's old side) are restored from HEAD into both
+// index and worktree, so partial staging unwinds too; additions (A —
+// untracked or staged) have no baseline to go back to and are removed
+// outright, exactly as the user asked ("如果本身是新增，就直接删除").
+// resolveSelection re-validates every path against a fresh status snapshot
+// first, so a stale checkbox can never revert something that changed in
+// between, and validateScFile's traversal rules apply as everywhere else.
+async function handleScRevert(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  const selection = await resolveSelection(repo, payload?.files);
+  if (selection.error !== undefined) return selection.error;
+  const results = [];
+  let restored = 0;
+  let deleted = 0;
+  let failed = 0;
+  for (const entry of selection.selected) {
+    const record = { path: entry.path, status: entry.status, action: '', ok: false, error: '' };
+    try {
+      if (entry.status === 'A') {
+        if (entry.staged === true) {
+          // Staged addition: drop from index + worktree in one step. (-f: the
+          // worktree copy differs from the index entry we are removing.)
+          await runGit(repo, ['rm', '-f', '--', entry.path]);
+        } else {
+          // Untracked: nothing in the index — a plain delete.
+          rmSync(join(repo, entry.path), { force: true });
+        }
+        record.action = 'deleted';
+        deleted += 1;
+      } else if (entry.status === 'R' && entry.orig !== null) {
+        // Staged rename: restore the old side, remove the new side.
+        await runGit(repo, ['checkout', 'HEAD', '--', entry.orig]);
+        if (entry.staged === true) await runGit(repo, ['rm', '-f', '--', entry.path]);
+        else rmSync(join(repo, entry.path), { force: true });
+        record.action = 'renamed-reverted';
+        restored += 1;
+      } else {
+        // M / D (worktree or index): back to HEAD, index included.
+        await runGit(repo, ['checkout', 'HEAD', '--', entry.path]);
+        record.action = 'restored';
+        restored += 1;
+      }
+      record.ok = true;
+      removeEmptyDirs(repo, dirname(join(repo, entry.path)));
+    } catch (error) {
+      failed += 1;
+      const tail = String(error?.stderr ?? '').trim() || String(error?.message ?? error);
+      record.error = tail.split('\n').slice(-2).join(' ').slice(0, 300);
+    }
+    results.push(record);
+  }
+  debugLog(`sc.revert repo=${repo} files=${selection.selected.length} restored=${restored} deleted=${deleted} failed=${failed}`);
+  if (failed > 0 && failed === selection.selected.length) {
+    // Every file failed — report as a git-error failure (the client shows
+    // per-file errors from results when only some failed).
+    return gitFailure({ stderr: results[0]?.error ?? '' }, repo, 'git revert');
+  }
+  return { ok: true, value: { repo, results, restored, deleted, failed } };
+}
+
+/** Prune directories a deleted file left empty (never above the repo root). */
+function removeEmptyDirs(repo, startDir) {
+  const base = resolve(repo);
+  let dir = resolve(startDir);
+  while (dir !== base && (dir.startsWith(`${base}\\`) || dir.startsWith(`${base}/`))) {
+    try { rmdirSync(dir); } catch { return; } // ENOTEMPTY/ENOENT/EBUSY → done
+    dir = dirname(dir);
+  }
 }
 
 async function handleScPush(payload) {

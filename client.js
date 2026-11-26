@@ -109,6 +109,17 @@ window.__ModuleLoader__.load({
         scDiffSplit: '横向',
         scDiffUnified: '纵向',
         scSelectHint: '勾选文件后可单笔提交',
+        scRevert: '撤销',
+        scRevertHint: '撤销此文件的改动：修改/删除还原，新增删除',
+        scRevertConfirmTitle: '撤销改动？',
+        scRevertConfirmRestore: '还原以下改动（回到最近提交）：',
+        scRevertConfirmDelete: '删除以下新增文件（不可恢复）：',
+        scRevertConfirmCancel: '取消',
+        scRevertConfirmOk: '撤销',
+        scReverting: '撤销中…',
+        scReverted: '已撤销',
+        scRevertRestored: '还原',
+        scRevertDeleted: '删除',
         fSc: '开始页「资源控制」入口',
         phrasesTitle: '常用语',
         phrasesIntro: '悬浮在输入框上方的快捷短语，点击即插入到光标处（最多 5 条）。',
@@ -230,6 +241,17 @@ window.__ModuleLoader__.load({
         scDiffSplit: 'Side-by-side',
         scDiffUnified: 'Unified',
         scSelectHint: 'Select files to commit them alone',
+        scRevert: 'Revert',
+        scRevertHint: 'Revert this file: edits/deletions are restored, additions deleted',
+        scRevertConfirmTitle: 'Revert changes?',
+        scRevertConfirmRestore: 'Restore these changes (back to the last commit):',
+        scRevertConfirmDelete: 'Delete these new files (cannot be undone):',
+        scRevertConfirmCancel: 'Cancel',
+        scRevertConfirmOk: 'Revert',
+        scReverting: 'Reverting…',
+        scReverted: 'Reverted',
+        scRevertRestored: 'restored',
+        scRevertDeleted: 'deleted',
         fSc: '"Start" page Source Control entry',
         phrasesTitle: 'Quick phrases',
         phrasesIntro: 'Phrases floating above the composer; click one to insert it at the caret (max 5).',
@@ -467,6 +489,8 @@ window.__ModuleLoader__.load({
     const SC_SPARK_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>';
     const SC_PULL_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
     const SC_DB_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>';
+    const SC_REVERT_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>';
+    const SC_REVERT_SM_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>';
 
     const SC_CSS = [
       // tab body inside the right-sidebar pane (sidebar.right.pane.tab slot);
@@ -546,6 +570,20 @@ window.__ModuleLoader__.load({
       '.dsh-tools-scBtn:disabled{opacity:.55;}',
       '.dsh-tools-scBtn.is-primary{background:var(--dsw-alias-brand-primary,#3b82f6);border-color:transparent;color:#fff;}',
       '.dsh-tools-scBtn.is-primary:disabled{opacity:.6;}',
+      '.dsh-tools-scBtn.is-danger{color:var(--dsw-alias-state-error-primary,#f85149);border-color:rgba(248,81,73,.45);}',
+      '.dsh-tools-scBtn.is-danger:hover:not(:disabled){border-color:var(--dsw-alias-state-error-primary,#f85149);background:rgba(248,81,73,.08);}',
+      '.dsh-tools-scFileRevert{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:0;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:none;opacity:0;transition:opacity 120ms ease,color 120ms ease,background-color 120ms ease;}',
+      '.dsh-tools-scFile:hover .dsh-tools-scFileRevert,.dsh-tools-scFileRevert:focus-visible{opacity:1;}',
+      '.dsh-tools-scFileRevert:hover{color:var(--dsw-alias-state-error-primary,#f85149);background:rgba(248,81,73,.10);}',
+      '.dsh-tools-scModalWrap{position:fixed;inset:0;z-index:2100;display:flex;align-items:center;justify-content:center;background:rgba(15,17,23,.40);}',
+      '.dsh-tools-scModal{width:min(420px,calc(100vw - 48px));display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:12px;background:var(--dsw-alias-bg-overlay,#242428);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 12px 32px rgba(15,17,23,.24);font:inherit;font-size:12.5px;color:var(--dsw-alias-label-primary);}',
+      '.dsh-tools-scModalTitle{font-size:13.5px;font-weight:600;}',
+      '.dsh-tools-scModalHead{font-weight:600;}',
+      '.dsh-tools-scModalHead.is-del{color:var(--dsw-alias-state-error-primary,#f85149);}',
+      '.dsh-tools-scModalList{display:flex;flex-direction:column;gap:4px;max-height:180px;overflow:auto;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.10));font-family:var(--dsw-alias-font-family-mono,monospace);font-size:11.5px;word-break:break-all;}',
+      '.dsh-tools-scModalList .is-del{color:var(--dsw-alias-state-error-primary,#f85149);}',
+      '.dsh-tools-scModalList .is-dim{color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-scModalActions{display:flex;gap:8px;justify-content:flex-end;}',
       '.dsh-tools-scNote{font-size:11.5px;color:var(--dsw-alias-label-secondary);min-width:0;word-break:break-word;}',
       '.dsh-tools-scNote.is-dim{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));opacity:.75;font-family:var(--dsw-alias-font-family-mono,monospace);}',
       '.dsh-tools-scNote.is-error{color:var(--dsw-alias-state-error-primary);}',
@@ -2263,6 +2301,57 @@ window.__ModuleLoader__.load({
               }
             };
 
+            // v0.8 撤销改动 — single file (row icon) or the current selection
+            // (danger button in the commit bar). Both routes go through a
+            // confirm dialog first: restoring is safe, but deleting a new
+            // file cannot be undone, so the dialog spells out exactly which
+            // files get which fate before anything runs.
+            const [revertAsk, setRevertAsk] = React.useState(null); // {repo, files:[{path,status}]}
+            React.useEffect(() => {
+              if (revertAsk === null) return undefined;
+              const onKey = (event) => { if (event.key === 'Escape') setRevertAsk(null); };
+              window.addEventListener('keydown', onKey);
+              return () => window.removeEventListener('keydown', onKey);
+            }, [revertAsk]);
+            const askRevert = (repo, files) => {
+              if (busy[repo.id]?.op) return;
+              setRevertAsk({ repo, files: files.map((f) => ({ path: f.path, status: f.status })) });
+            };
+            const doRevert = async (repo, paths) => {
+              if (busy[repo.id]?.op) return;
+              setRevertAsk(null);
+              setBusyState(repo.id, { op: 'revert', error: '', note: t('scReverting') });
+              try {
+                const r = await call('sc.revert', { repo: repo.path, files: paths });
+                if (r?.ok === true) {
+                  const restored = Number(r.value?.restored ?? 0);
+                  const deleted = Number(r.value?.deleted ?? 0);
+                  const failed = Number(r.value?.failed ?? 0);
+                  const parts = [t('scReverted')];
+                  if (restored > 0) parts.push(`${t('scRevertRestored')} ${restored}`);
+                  if (deleted > 0) parts.push(`${t('scRevertDeleted')} ${deleted}`);
+                  const firstError = Array.isArray(r.value?.results)
+                    ? r.value.results.find((row) => row?.ok !== true)
+                    : null;
+                  setBusyState(repo.id, failed > 0
+                    ? { op: null, note: parts.join(' · '), error: `${t('scRevertFailed')} × ${failed}${firstError?.error ? `: ${firstError.error}` : ''}` }
+                    : { op: null, note: parts.join(' · ') });
+                  clearSelection(repo.id);
+                  setDiffKey(null);
+                  setDiffState((current) => {
+                    const next = { ...current };
+                    for (const p of paths) delete next[`${repo.id}\u0001${p}`];
+                    return next;
+                  });
+                  void refreshRepo(repo);
+                } else {
+                  setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
+                }
+              } catch (error) {
+                setBusyState(repo.id, { op: null, error: error?.message ?? String(error) });
+              }
+            };
+
             const doPush = async (repo) => {
               if (busy[repo.id]?.op) return;
               setBusyState(repo.id, { op: 'push', error: '', note: t('scPushing') });
@@ -2443,7 +2532,14 @@ window.__ModuleLoader__.load({
                         React.createElement('span', {
                           className: `dsh-tools-scBadge is-${file.status}`,
                           title: t(STATUS_DICT[file.status] ?? 'stM'),
-                        }, file.status)),
+                        }, file.status),
+                        React.createElement('button', {
+                          type: 'button',
+                          className: 'dsh-tools-scFileRevert',
+                          title: t('scRevertHint'),
+                          'aria-label': `${t('scRevert')}: ${file.path}`,
+                          onClick: () => askRevert(repo, [file]),
+                        }, icon(SC_REVERT_GLYPH))),
                       diffOpen ? React.createElement('div', null,
                         ds === undefined || ds.loading ? React.createElement('div', { className: 'dsh-tools-scNote', style: { padding: '6px 12px' } }, '…')
                           : (ds.error !== undefined ? React.createElement('div', { className: 'dsh-tools-scNote is-error', style: { padding: '6px 12px' } }, ds.error)
@@ -2479,6 +2575,15 @@ window.__ModuleLoader__.load({
                         onChange: (event) => setMsgMap((current) => ({ ...current, [repo.id]: event.target.value })),
                       })),
                     React.createElement('div', { className: 'dsh-tools-scActions' },
+                      // v0.8 撤销改动 — reverts every selected file in one
+                      // shot (M/D restored, A deleted) after a confirm dialog.
+                      React.createElement('button', {
+                        type: 'button',
+                        className: 'dsh-tools-scBtn is-danger',
+                        disabled: anyBusy,
+                        title: t('scRevertHint'),
+                        onClick: () => { askRevert(repo, st.files.filter((f) => sel.has(f.path))); },
+                      }, icon(SC_REVERT_SM_GLYPH), React.createElement('span', null, t('scRevert'))),
                       React.createElement('button', {
                         type: 'button',
                         className: 'dsh-tools-scBtn',
@@ -2553,7 +2658,57 @@ window.__ModuleLoader__.load({
                 React.createElement('span', { className: 'dsh-tools-scNote' }, t('scEmpty')),
                 React.createElement('span', { className: 'dsh-tools-scNote' }, t('scEmptyHint')),
                 rootsHint.length > 0 ? React.createElement('span', { className: 'dsh-tools-scNote is-dim' }, rootsHint.join(' · ')) : null) : null,
-              repos !== null && reposError === '' ? repoGroups : null));
+              repos !== null && reposError === '' ? repoGroups : null),
+            // v0.8 撤销确认弹层 — the sc pane lives inside the sidebar, so a
+            // fixed-position overlay is the only way to shade the whole app
+            // like a system dialog. Two lists spell out the two fates
+            // (restore vs delete-new) before anything runs.
+            revertAsk !== null ? (() => {
+              const restores = revertAsk.files.filter((f) => f.status !== 'A');
+              const deletes = revertAsk.files.filter((f) => f.status === 'A');
+              const renderAskList = (entries, danger) => {
+                if (entries.length === 0) return null;
+                const shown = entries.slice(0, 12);
+                return React.createElement('div', null,
+                  React.createElement('div', { className: `dsh-tools-scModalHead${danger ? ' is-del' : ''}` },
+                    danger ? t('scRevertConfirmDelete') : t('scRevertConfirmRestore')),
+                  React.createElement('div', { className: 'dsh-tools-scModalList' },
+                    shown.map((entry) => React.createElement('span', {
+                      key: entry.path,
+                      className: danger ? 'is-del' : '',
+                      title: entry.path,
+                    }, entry.path)),
+                    entries.length > shown.length
+                      ? React.createElement('span', { className: 'is-dim' }, `… +${entries.length - shown.length}`)
+                      : null));
+              };
+              return React.createElement('div', {
+                className: 'dsh-tools-scModalWrap',
+                role: 'dialog',
+                'aria-modal': 'true',
+                'aria-label': t('scRevertConfirmTitle'),
+                onClick: () => setRevertAsk(null),
+              },
+              React.createElement('div', {
+                className: 'dsh-tools-scModal',
+                onClick: (event) => event.stopPropagation(),
+              },
+                React.createElement('div', { className: 'dsh-tools-scModalTitle' }, t('scRevertConfirmTitle')),
+                renderAskList(restores, false),
+                renderAskList(deletes, true),
+                React.createElement('div', { className: 'dsh-tools-scModalActions' },
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scBtn',
+                    onClick: () => setRevertAsk(null),
+                  }, t('scRevertConfirmCancel')),
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scBtn is-danger',
+                    autoFocus: true,
+                    onClick: () => { void doRevert(revertAsk.repo, revertAsk.files.map((f) => f.path)); },
+                  }, t('scRevertConfirmOk')))));
+            })() : null);
           };
 
           // Register/unregister the tab type against the current flag. The

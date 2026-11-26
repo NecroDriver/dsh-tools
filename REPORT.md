@@ -1,8 +1,8 @@
-# dsh-tools 交付报告（2026-11-24，v0.7.11）
+# dsh-tools 交付报告（2026-11-26，v0.8.0）
 
 ## 状态
 
-- 插件 `dsh-tools` v0.7.0 编码/测试完成，待安装（**github:NecroDriver/dsh-tools git 安装**）。v0.6.7 已热替换上线（dev.ping=v0.6.7）；用户 F5 后报常用语条消失 → v0.7.0 含修复。
+- 插件 `dsh-tools` v0.8.0 编码/测试完成，profile 内为 Junction 直连本仓库（`link:D:/Workspace/personal/dsh-tools`），重启 DSH 生效。
 - **按钮重启已端到端验证成功**（v0.2.3 起多次实测）：点击「更多 → 重启 DSH」→ 两级启动 → 杀 app/host/孤儿子进程 → relaunch → 应用回来。
 - v0.2.4：WMI 助手「大黑框」→ `ShowWindow=0` + `-WindowStyle Hidden` 隐藏；helper relaunch 观测行。
 - v0.3.0：**输入栏「生成」按钮**（slot `conversation.input.right`）——最后一轮 AI 回复经 Host `suggest`（`ctx.llm` 流式，模型取自 `agentDefaultModel.currentSelection()`）生成 1–3 句意向回复填入 Lexical composer。
@@ -25,6 +25,36 @@
 - v0.7.11：**推送图标更换**（用户反馈：旧的双向循环箭头与刷新图标太像、易误解）——改为上传式上箭头（arrow-up-out-of-tray），与「更新代码」的下载式下拉形成 拉取/推送 一对。
 - v0.7.10：**横向比对修正 + VSCode 风格 diff 视觉**（用户反馈：新文件横向展示错乱、布局丑）——根因=合成 untracked diff 缺 `@@` hunk 头（客户端全 `+` 行堆尾配对、左栏整列空、行号从 0 起）+ git preamble（diff --git/---/+++）被当内容渲染；服务端 syntheticNewFileDiff 补标准 hunk 头，客户端两种布局都过滤 preamble 并给无 hunk 兜底行号；视觉上 unified/split 的增删行加整行半透明色块 + 左缘指示条、hunk 头低调灰底小字、split 新侧行号列前加 1px 中线、行号 tabular-nums、diff 格 content-visibility（见下节）。
 - v0.7.11（续）：**工具设置新增「新会话默认展开右侧栏」开关**（默认开；用户需求：DSH 本身没有该设置，新增会话一律收起）——客户端 `registerSidebarAutoOpen` 监听 `sidebarRight.mounted` + `sessions.list`，只对"新"会话（启动基线之后出现、或 `blank === true` 的新建会话）调用 `sidebarRight.toggleExpanded()`，每个会话仅一次、子代理会话跳过、启动时恢复出来的既有会话保持持久化状态（启动恰好落在空白新会话上则视为新会话照常展开）、焦点留在输入框（见下节）。
+
+- v0.8.0：**资源控制「撤销改动」**（用户需求：「dsh-tools需要支持选中文件撤销改动，单文件撤销改动，如果本身是新增，就直接删除」）——每个文件行悬停显现撤销小图标（单文件），提交栏新增红色「撤销」按钮（撤销全部勾选）；确认弹层分两栏列出两种处置（还原 M/D/R vs 删除新增）；Host `sc.revert` 复用 `resolveSelection` 防陈旧/防遍历；顺带修复 untracked 目录折叠问题（`git status` 改 `-uall`，嵌套新增文件逐个列出）（见下节）。
+
+## v0.8.0（2026-11-26）
+
+### 资源控制：撤销改动（单文件 / 多选；新增直接删除）
+
+用户需求原文：「dsh-tools需要支持选中文件撤销改动，单文件撤销改动，如果本身是新增，就直接删除。」
+
+**Host（index.js）**：
+- 新 RPC `sc.revert`（dispatch 表 + `handleScRevert`）：`requireScRepo` → `resolveSelection`（fresh status 复核，陈旧勾选/路径遍历/非变更文件一律 bad-request，与 commit 同口径）。
+- 处置规则（按 porcelain 状态）：
+  - `A`（新增，untracked 或已暂存）：无基线可回 → **直接删除**。staged → `git rm -f -- <path>`（index+worktree 一步）；untracked → `rmSync(force)`。
+  - `M`/`D`：`git checkout HEAD -- <path>`（index+worktree 都回 HEAD，部分暂存也一并还原）。
+  - `R`（重命名，staged）：还原旧侧 `git checkout HEAD -- <orig>` + 新侧按 staged 与否 `git rm -f` 或 `rmSync`——完整撤销重命名。
+  - 删除文件后 `removeEmptyDirs`：从文件目录向上清空目录（`rmdirSync`，非空即停），止于 repo root。
+- 逐文件 try/catch：`results:[{path,status,action,ok,error}]`（error=stderr 尾 300 字符）；**部分失败仍返回 ok:true**（带 restored/deleted/failed 计数，客户端展示首条错误）；全部失败 → `gitFailure`。debugLog 摘要行。
+- **顺带根修**：`currentChanges` 的 `git status --porcelain=v1 -z` → 加 `-uall`。旧行为把整个未跟踪目录折叠成一条 `dir/` 记录——无法逐文件 diff/撤销、勾选提交语义也含糊；现在嵌套新增文件逐个列出（与 VSCode 源代码管理一致；`SC_MAX_FILES` 截断兜底大目录）。
+
+**Client（client.js）**：
+- 文件行：状态徽章后新增 `scFileRevert` 小图标（undo 箭头，悬停显现、红色 hover；`title`/`aria-label` 齐全）→ `askRevert(repo,[file])`。
+- 提交栏 `scActions` 行首新增红色危险按钮「撤销」（`is-danger` 样式，busy 禁用）→ `askRevert(repo, 勾选文件)`。
+- 确认弹层（`revertAsk` state + `scModalWrap/scModal` 固定定位遮罩）：两栏列表明确两种处置——「还原以下改动（回到最近提交）」（M/D/R，常规色）与「删除以下新增文件（不可恢复）」（A，红色）；每栏最多 12 条 + `… +N` 折叠；Esc/遮罩点击/取消按钮 → 关闭；确认 → `doRevert`。
+- `doRevert`：busy op `'revert'`；成功 note=`已撤销 · 还原 N · 删除 M`（部分失败附首条 per-file error）；成功后清勾选、关 diff、按 path 清 diffState 缓存、`refreshRepo`。
+- 字典（zh/en）`scRevert*` 系列 13 键；`SC_REVERT_GLYPH`（undo 箭头）；CSS：`is-danger` 按钮、行内撤销图标、弹层 8 类。
+- 图标风格修正（用户反馈：「你这图标风格一下差太多了」）：初版 undo 箭头是自绘的截断弧线（`v1` 悬空短线脚），与 feather 系其它图标不搭；改为 feather 原生 `corner-up-left` 几何（`polyline 9 14 4 9 9 4` + `M20 20v-7a4 4 0 0 0-4-4H4`，完整曲线收笔）。且尺寸对齐家族惯例：文件行图标按钮用 13px（与 pull/push/db/refresh 同），提交栏文字按钮用 12px（与 AI 生成的 spark 同）——拆成 `SC_REVERT_GLYPH`/`SC_REVERT_SM_GLYPH` 两个常量。
+
+**测试（scripts/test-sc.mjs 新增 7 项断言）**：5 文件混合撤销（b untracked-A / c D / e R+orig / f staged-A / nested/n.txt untracked-A）→ restored=2、deleted=3、failed=0；断言 b/f/e/嵌套目录全消失、c.txt/d.txt 内容回 HEAD（CRLF 归一后比对——Git for Windows autocrlf 会把 LF 检出为 CRLF）；撤销后 `sc.status` 干净；非变更文件/路径遍历/非绝对 repo 三种 bad-request。全量回归：test-sc 29 项 ALL CHECKS PASSED；smoke / test-usage 23 / test-client-render / test-two-stage / test-sidebar-auto-open 全绿。
+
+**生效方式**：profile `node_modules\dsh-tools` 为 Junction 直连本仓库——Host（index.js）改动需重启 DSH（或插件页重载），Client（client.js）改动刷新页面即可。
 
 ## v0.7.11（2026-11-24）
 

@@ -7,7 +7,7 @@
 // pull (git pull --rebase --autostash with a real origin), and the prisma
 // script runner (missing scripts / echo scripts / failing script).
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, rmSync as rmFile, renameSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, rmSync as rmFile, renameSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -235,6 +235,33 @@ check('sc.commitMessage → ok draft from llm, prompt carries history + per-file
   `draft=${JSON.stringify(r.value?.draft)} promptHead=${JSON.stringify(prompt.slice(0, 160))}`);
 check('sc.commitMessage uses selection-route model',
   seenPrepareCalls.at(-1)?.provider === 'deepseek' && seenPrepareCalls.at(-1)?.model === 'test-model');
+
+// --- v0.8 sc.revert: M/D/R restored from HEAD, A (untracked + staged) deleted ---
+mkdirSync(join(repoA, 'nested'), { recursive: true });
+writeFileSync(join(repoA, 'nested', 'n.txt'), 'untracked nested\n');
+writeFileSync(join(repoA, 'f.txt'), 'staged addition\n');
+git(repoA, 'add', '--', 'f.txt');
+r = await post('sc.revert', { repo: repoA, files: ['b.txt', 'c.txt', 'e.txt', 'f.txt', 'nested/n.txt'] });
+check('sc.revert → restored=2 (c D, e R) deleted=3 (b untracked, f staged, nested/n), failed=0',
+  r.ok === true && r.value?.failed === 0 && r.value?.restored === 2 && r.value?.deleted === 3,
+  `ok=${r.ok} restored=${r.value?.restored} deleted=${r.value?.deleted} failed=${r.value?.failed} error=${JSON.stringify(r.error)} results=${JSON.stringify(r.value?.results)}`);
+check('sc.revert removed additions (files + now-empty dir gone)',
+  !existsSync(join(repoA, 'b.txt')) && !existsSync(join(repoA, 'f.txt'))
+  && !existsSync(join(repoA, 'e.txt')) && !existsSync(join(repoA, 'nested')),
+  `b=${existsSync(join(repoA, 'b.txt'))} f=${existsSync(join(repoA, 'f.txt'))} e=${existsSync(join(repoA, 'e.txt'))} nested=${existsSync(join(repoA, 'nested'))}`);
+check('sc.revert restored deletion + rename to HEAD content',
+  readFileSync(join(repoA, 'c.txt'), 'utf8').replace(/\r\n/g, '\n') === 'to be deleted\n'
+  && readFileSync(join(repoA, 'd.txt'), 'utf8').replace(/\r\n/g, '\n') === 'renamed away\n');
+r = await post('sc.status', { repo: repoA });
+check('sc.status after revert → working copy clean',
+  r.ok === true && r.value?.files?.length === 0,
+  `files=${JSON.stringify(r.value?.files)}`);
+r = await post('sc.revert', { repo: repoA, files: ['a.txt'] });
+check('sc.revert rejects file that is not a change', r.ok === false && r.error?.code === 'bad-request');
+r = await post('sc.revert', { repo: repoA, files: ['../evil.txt'] });
+check('sc.revert rejects traversal path', r.ok === false && r.error?.code === 'bad-request');
+r = await post('sc.revert', { repo: 'relative/path', files: ['a.txt'] });
+check('sc.revert rejects non-absolute repo', r.ok === false && r.error?.code === 'bad-request');
 
 // --- push guard: no remote configured → git-error, not a crash ---
 r = await post('sc.push', { repo: repoA });
