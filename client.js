@@ -89,9 +89,25 @@ window.__ModuleLoader__.load({
         scPush: '推送',
         scPushing: '推送中…',
         scPushed: '已推送',
+        scUpdateCode: '更新代码',
+        scUpdateCodeTitle: '更新代码：git pull --rebase --autostash',
+        scUpdateCodeAllTitle: '对所有仓库执行 git pull --rebase --autostash',
+        scPulling: '更新代码中…',
+        scPulled: '代码已更新',
+        scUpdateDb: '更新数据库',
+        scUpdateDbTitle: '更新数据库：pnpm prisma:generate → pnpm prisma:push',
+        scUpdateDbAllTitle: '对所有仓库执行 pnpm prisma:generate → pnpm prisma:push',
+        scDbRunning: '更新数据库中…',
+        scDbDone: '数据库已更新',
+        scNoPrisma: '无 prisma 脚本，已跳过',
+        scBatchSkipped: '跳过',
+        scBatchFailed: '失败',
         scNoMsg: '先填写或生成提交信息',
         scNoFiles: '勾选要提交的文件',
         scDiffFailed: 'diff 加载失败',
+        scDiffStyleTitle: '切换比对方向（横向并排 / 纵向逐行）',
+        scDiffSplit: '横向',
+        scDiffUnified: '纵向',
         scSelectHint: '勾选文件后可单笔提交',
         fSc: '开始页「资源控制」入口',
         phrasesTitle: '常用语',
@@ -106,6 +122,7 @@ window.__ModuleLoader__.load({
         scAddRoot: '添加目录',
         scRemoveRoot: '移除',
         fUsage: '侧栏「今日用量」组件',
+        fOpenSidebar: '新会话默认展开右侧栏',
         usageTodayLabel: '今日',
         usageTitle: '今日 Token 用量',
         usageInput: '输入',
@@ -121,6 +138,8 @@ window.__ModuleLoader__.load({
         usageError: '用量读取失败',
         usageRetry: '重试',
         usagePartial: '部分会话读取失败，统计可能不完整',
+        usageDayNames: '周日,周一,周二,周三,周四,周五,周六',
+        usageTodayShort: '今',
       },
       en: {
         more: 'More',
@@ -191,9 +210,25 @@ window.__ModuleLoader__.load({
         scPush: 'Push',
         scPushing: 'Pushing…',
         scPushed: 'Pushed',
+        scUpdateCode: 'Update code',
+        scUpdateCodeTitle: 'Update code: git pull --rebase --autostash',
+        scUpdateCodeAllTitle: 'Run git pull --rebase --autostash on every repository',
+        scPulling: 'Updating code…',
+        scPulled: 'Code updated',
+        scUpdateDb: 'Update database',
+        scUpdateDbTitle: 'Update database: pnpm prisma:generate → pnpm prisma:push',
+        scUpdateDbAllTitle: 'Run pnpm prisma:generate → pnpm prisma:push on every repository',
+        scDbRunning: 'Updating database…',
+        scDbDone: 'Database updated',
+        scNoPrisma: 'No prisma scripts; skipped',
+        scBatchSkipped: 'skipped',
+        scBatchFailed: 'failed',
         scNoMsg: 'Write or generate a commit message first',
         scNoFiles: 'Select files to commit',
         scDiffFailed: 'Failed to load diff',
+        scDiffStyleTitle: 'Toggle diff layout (side-by-side / unified)',
+        scDiffSplit: 'Side-by-side',
+        scDiffUnified: 'Unified',
         scSelectHint: 'Select files to commit them alone',
         fSc: '"Start" page Source Control entry',
         phrasesTitle: 'Quick phrases',
@@ -208,6 +243,7 @@ window.__ModuleLoader__.load({
         scAddRoot: 'Add directory',
         scRemoveRoot: 'Remove',
         fUsage: 'Sidebar "Today\'s usage" widget',
+        fOpenSidebar: 'Open the right sidebar on new sessions',
         usageTodayLabel: 'Today',
         usageTitle: 'Today\'s token usage',
         usageInput: 'Input',
@@ -223,6 +259,8 @@ window.__ModuleLoader__.load({
         usageError: 'Failed to load usage',
         usageRetry: 'Retry',
         usagePartial: 'Some sessions failed to load; totals may be incomplete',
+        usageDayNames: 'Sun,Mon,Tue,Wed,Thu,Fri,Sat',
+        usageTodayShort: 'Now',
       },
     };
 
@@ -237,6 +275,7 @@ window.__ModuleLoader__.load({
       sc: true,
       phrases: true,
       usage: true,
+      openSidebar: true,
     };
     const modelOverride = { provider: '', model: '' };
     // apply() installs a hook so flag changes can (un)mount the caption menu.
@@ -269,6 +308,9 @@ window.__ModuleLoader__.load({
     // before/after slot teardown. State object is REPLACED (not mutated) on
     // every change so useSyncExternalStore sees a new snapshot reference.
     let usageCall = null;
+    // `usageBeacon` (bound by apply) writes diagnostic tags to the host debug
+    // log; usageStore lives at factory scope so it cannot see apply locals.
+    let usageBeacon = null;
     const usageStore = {
       state: { status: 'idle', data: null, error: '', updatedAt: 0 },
       listeners: new Set(),
@@ -292,6 +334,7 @@ window.__ModuleLoader__.load({
       refresh(force) {
         if (usageStore._inflight !== null) return usageStore._inflight;
         if (usageCall === null) {
+          usageBeacon?.('usage-rpc-null');
           usageStore._set({ status: 'error', error: 'rpc unavailable' });
           return Promise.resolve();
         }
@@ -410,12 +453,20 @@ window.__ModuleLoader__.load({
     const OPT_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8L19 13"/><path d="M15 9h0"/><path d="M17.8 6.2L19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2L11 5"/></svg>';
 
     const SC_GLYPH = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>';
-    const SC_PUSH_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>';
+    // v0.7.11: push = upload-style arrow (arrow up out of the tray) — the
+    // previous two-arrow loop glyph read as "refresh" at 13px (user request).
+    const SC_PUSH_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
     const SC_REFRESH_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
+    // v0.7.9 diff-layout toggle: split = vertical divider (side-by-side),
+    // unified = horizontal divider (rows).
+    const SC_COLS_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>';
+    const SC_ROWS_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>';
     const SC_CLOSE_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     const SC_CHEVRON_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
     const SC_PLUS_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
     const SC_SPARK_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>';
+    const SC_PULL_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+    const SC_DB_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>';
 
     const SC_CSS = [
       // tab body inside the right-sidebar pane (sidebar.right.pane.tab slot);
@@ -423,29 +474,39 @@ window.__ModuleLoader__.load({
       '.dsh-tools-scTab{display:flex;flex-direction:column;height:100%;min-height:0;font-size:13.5px;color:var(--dsw-alias-label-primary);}',
       '.dsh-tools-scHeader{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;}',
       '.dsh-tools-scHeaderTitle{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;flex:1;min-width:0;}',
-      '.dsh-tools-scIconBtn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:default;flex:none;}',
+      // v0.7.5 update bar: 更新代码 / 更新数据库 sweep EVERY listed repository.
+      '.dsh-tools-scNoteRow{display:flex;align-items:center;padding:6px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;}',
+      '.dsh-tools-scBatchNote{min-width:0;font-size:11.5px;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.dsh-tools-scIconBtn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;flex:none;transition:background-color 120ms ease,color 120ms ease;}',
       '.dsh-tools-scIconBtn:hover:not(:disabled),.dsh-tools-scIconBtn:focus-visible:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary);outline:none;}',
+      '.dsh-tools-scIconBtn:active:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.3));}',
       '.dsh-tools-scIconBtn:disabled{opacity:.55;}',
       '.dsh-tools-scBody{flex:1;overflow-y:auto;padding:8px 8px 16px;}',
       '.dsh-tools-scState{display:flex;flex-direction:column;gap:8px;padding:18px 10px;color:var(--dsw-alias-label-secondary);}',
       '.dsh-tools-scGroup{margin:4px 0 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;overflow:hidden;background:var(--dsw-alias-bg-layer-2,transparent);}',
       '.dsh-tools-scGroupHead{display:flex;align-items:center;gap:7px;padding:7px 10px;background:transparent;}',
-      '.dsh-tools-scGroupHeadMain{flex:1;min-width:0;display:flex;align-items:center;gap:7px;background:transparent;border:0;padding:2px 4px;border-radius:5px;color:inherit;font:inherit;text-align:left;cursor:default;}',
-      '.dsh-tools-scGroupHeadMain:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}',
+      '.dsh-tools-scGroupHeadMain{flex:1;min-width:0;display:flex;align-items:center;gap:7px;background:transparent;border:0;padding:2px 4px;border-radius:5px;color:inherit;font:inherit;text-align:left;cursor:pointer;}',
+      '.dsh-tools-scGroupHeadMain:hover,.dsh-tools-scGroupHeadMain:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));outline:none;}',
       '.dsh-tools-scRepoName{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
       '.dsh-tools-scBranch{font-size:11.5px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));border-radius:5px;padding:1px 6px;white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis;flex:none;}',
       '.dsh-tools-scCount{font-size:11.5px;color:var(--dsw-alias-label-secondary);flex:none;}',
       '.dsh-tools-scChev{display:inline-flex;flex:none;color:var(--dsw-alias-label-secondary);transition:transform 150ms ease;}',
+      // v0.7.8 default icon wrapper: svg as block inside a centered flex box
+      // kills baseline alignment (no descender gap, true optical centering).
+      '.dsh-tools-scIco{display:inline-flex;align-items:center;justify-content:center;flex:none;line-height:0;}',
+      '.dsh-tools-scIco svg{display:block;}',
       '.dsh-tools-scChev.is-open{transform:rotate(180deg);}',
-      '.dsh-tools-scMini{display:inline-flex;align-items:center;height:22px;padding:0 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11.5px;cursor:default;flex:none;white-space:nowrap;}',
-      '.dsh-tools-scMini:hover:not(:disabled){color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-scMini{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11.5px;cursor:pointer;flex:none;white-space:nowrap;transition:color 120ms ease,border-color 120ms ease,background-color 120ms ease;}',
+      '.dsh-tools-scMini:hover:not(:disabled),.dsh-tools-scMini:focus-visible:not(:disabled){color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-secondary);outline:none;}',
+      '.dsh-tools-scMini:active:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));}',
       '.dsh-tools-scMini:disabled{opacity:.55;}',
+      '.dsh-tools-scVDiv{width:1px;height:16px;background:var(--dsw-alias-border-l2);flex:none;}',
       '.dsh-tools-scFiles{display:flex;flex-direction:column;}',
-      '.dsh-tools-scFile{display:flex;align-items:center;gap:7px;padding:3px 10px 3px 12px;cursor:default;}',
+      '.dsh-tools-scFile{display:flex;align-items:center;gap:7px;padding:3px 10px 3px 12px;cursor:default;content-visibility:auto;contain-intrinsic-size:auto 26px;}',
       '.dsh-tools-scFile:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}',
       '.dsh-tools-scFile input[type=checkbox]{accent-color:var(--dsw-alias-brand-primary,#3b82f6);width:14px;height:14px;flex:none;margin:0;}',
-      '.dsh-tools-scFileMain{flex:1;min-width:0;background:transparent;border:0;padding:2px 3px;border-radius:4px;color:inherit;font:inherit;text-align:left;cursor:default;overflow:hidden;}',
-      '.dsh-tools-scFileMain:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));}',
+      '.dsh-tools-scFileMain{flex:1;min-width:0;background:transparent;border:0;padding:2px 3px;border-radius:4px;color:inherit;font:inherit;text-align:left;cursor:pointer;overflow:hidden;}',
+      '.dsh-tools-scFileMain:hover,.dsh-tools-scFileMain:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));outline:none;}',
       '.dsh-tools-scFileName{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
       '.dsh-tools-scFileDir{display:block;font-size:11px;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
       '.dsh-tools-scBadge{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:4px;font-size:10.5px;font-weight:700;flex:none;}',
@@ -458,7 +519,23 @@ window.__ModuleLoader__.load({
       '.dsh-tools-scDiff .dsh-tools-dl{display:block;}',
       '.dsh-tools-scDiff .dsh-tools-dl.is-add{color:var(--dsw-alias-state-success-primary,#3fb950);}',
       '.dsh-tools-scDiff .dsh-tools-dl.is-del{color:var(--dsw-alias-state-error-primary,#f85149);}',
-      '.dsh-tools-scDiff .dsh-tools-dl.is-hunk{color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-scDiff .dsh-tools-dl.is-hunk{color:var(--dsw-alias-label-secondary);font-size:10.5px;}',
+      // v0.7.9 diff-layout toggle: slim bar above the diff with the switch,
+      // then either the classic unified <pre> or a side-by-side grid.
+      '.dsh-tools-scDiffBar{display:flex;justify-content:flex-end;align-items:center;padding:3px 10px;border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.18));}',
+      // v0.7.10 VSCode-style: full-row tint backgrounds + inset edge markers
+      // instead of text color alone. The rgba tints are deliberately not
+      // theme tokens — they must read on both light and dark aliases the way
+      // editor diff views do (state colors stay tokenized for the text).
+      '.dsh-tools-scDiff .dsh-tools-dl.is-add{color:var(--dsw-alias-state-success-primary,#3fb950);background:rgba(63,185,80,.10);margin:0 -10px;padding:0 10px;}',
+      '.dsh-tools-scDiff .dsh-tools-dl.is-del{color:var(--dsw-alias-state-error-primary,#f85149);background:rgba(248,81,73,.10);margin:0 -10px;padding:0 10px;}',
+      '.dsh-tools-scDiffSplit{border-top:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.18));max-height:300px;overflow:auto;display:grid;grid-template-columns:4ch minmax(0,1fr) 4ch minmax(0,1fr);font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:11.5px;line-height:1.55;}',
+      '.dsh-tools-scDiffSplit .dsh-tools-dh{grid-column:1 / -1;color:var(--dsw-alias-label-secondary);padding:0 10px;white-space:pre;font-size:10.5px;line-height:1.9;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.08));}',
+      '.dsh-tools-scDiffSplit .dsh-tools-dno{color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.75));text-align:right;padding:0 4px 0 6px;user-select:none;font-variant-numeric:tabular-nums;}',
+      '.dsh-tools-scDiffSplit .dsh-tools-dno.is-new{border-left:1px solid var(--dsw-alias-border-l1);}',
+      '.dsh-tools-scDiffSplit .dsh-tools-dc{white-space:pre-wrap;overflow-wrap:anywhere;padding-right:8px;content-visibility:auto;contain-intrinsic-size:auto 18px;}',
+      '.dsh-tools-scDiffSplit .dsh-tools-dc.is-add{color:var(--dsw-alias-state-success-primary,#3fb950);background:rgba(63,185,80,.10);box-shadow:inset 2px 0 0 rgba(63,185,80,.55);}',
+      '.dsh-tools-scDiffSplit .dsh-tools-dc.is-del{color:var(--dsw-alias-state-error-primary,#f85149);background:rgba(248,81,73,.10);box-shadow:inset 2px 0 0 rgba(248,81,73,.55);}',
       '.dsh-tools-scCommitBar{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1);}',
       '.dsh-tools-scMsgRow{display:flex;gap:6px;align-items:flex-start;}',
       '.dsh-tools-scMsg{flex:1;min-width:0;resize:vertical;min-height:34px;max-height:110px;padding:6px 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2,transparent);color:inherit;font:inherit;font-size:12.5px;}',
@@ -508,27 +585,46 @@ window.__ModuleLoader__.load({
       '.dsh-tools-usageChipValue.is-error{color:var(--dsw-alias-state-warn-primary,#d29922);}',
       // rail (collapsed sidebar): icon-only square, centered by the shell
       '.dsh-tools-usageChip.is-rail{width:32px;height:32px;justify-content:center;padding:0;margin:0 0 4px;}',
-      // ---- popover (fixed, body-level) ----
-      '.dsh-tools-usagePop{position:fixed;z-index:2000;width:272px;padding:14px 14px 10px;border-radius:12px;background:var(--dsw-alias-bg-overlay,#222);border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.22));box-shadow:0 12px 32px rgba(0,0,0,.28);font:inherit;font-size:12.5px;color:var(--dsw-alias-label-primary);animation:dsh-tools-usageIn 140ms cubic-bezier(.2,.8,.2,1);}',
-      '@keyframes dsh-tools-usageIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}',
+      // ---- popover (fixed, body-level) — theme-adaptive data card ----
+      '.dsh-tools-usagePop{--u-line:var(--dsw-alias-border-l1,rgba(128,128,128,.24));--u-fill:rgba(128,128,128,.07);--u-fill:color-mix(in srgb,var(--dsw-alias-label-primary,#8f8f96) 7%,transparent);--u-bar:rgba(128,128,128,.32);--u-bar:color-mix(in srgb,var(--dsw-alias-label-primary,#8f8f96) 26%,transparent);--u-in:#0284c7;--u-out:#d97706;--u-cr:var(--dsw-alias-brand-primary,#3b82f6);--u-cw:#7c3aed;position:fixed;z-index:2000;width:280px;padding:16px 16px 12px;border-radius:14px;background:var(--dsw-alias-bg-overlay,#232327);border:1px solid var(--u-line);box-shadow:0 12px 32px rgba(15,17,23,.16),0 2px 6px rgba(15,17,23,.08);font:inherit;font-size:12.5px;color:var(--dsw-alias-label-primary,#f2f2f2);animation:dsh-tools-usageIn 180ms cubic-bezier(.16,1,.3,1);}',
+      '@keyframes dsh-tools-usageIn{from{opacity:0;transform:translateY(6px) scale(.98);}to{opacity:1;transform:none;}}',
       '@media (prefers-reduced-motion: reduce){.dsh-tools-usagePop{animation:none;}}',
       '.dsh-tools-usagePop *{box-sizing:border-box;}',
-      '.dsh-tools-usageHead{display:flex;align-items:baseline;gap:8px;}',
-      '.dsh-tools-usageHeadTitle{flex:1;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary);}',
-      '.dsh-tools-usageTotal{font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;}',
-      '.dsh-tools-usageBuckets{display:flex;flex-direction:column;gap:7px;margin:12px 0 2px;}',
-      '.dsh-tools-usageBucketRow{display:flex;align-items:center;gap:8px;height:16px;}',
-      '.dsh-tools-usageBucketName{width:52px;flex:none;color:var(--dsw-alias-label-secondary);font-size:11.5px;}',
-      '.dsh-tools-usageBucketValue{width:64px;flex:none;text-align:right;font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:11.5px;font-variant-numeric:tabular-nums;}',
-      '.dsh-tools-usageBar{flex:1;height:4px;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.18));overflow:hidden;}',
-      '.dsh-tools-usageBarFill{height:100%;border-radius:2px;background:var(--dsw-alias-brand-primary,#3b82f6);transition:width 300ms ease-out;}',
-      '.dsh-tools-usageMeta{margin:10px 0 0;color:var(--dsw-alias-label-secondary);font-size:11.5px;}',
-      '.dsh-tools-usageChartTitle{margin:13px 0 6px;color:var(--dsw-alias-label-secondary);font-size:11.5px;}',
-      '.dsh-tools-usageChart{display:flex;align-items:flex-end;gap:5px;height:34px;}',
-      '.dsh-tools-usageCol{flex:1;display:flex;align-items:flex-end;height:100%;min-width:0;}',
-      '.dsh-tools-usageColBar{width:100%;min-height:2px;border-radius:2px 2px 1px 1px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.28));transition:height 300ms ease-out;}',
-      '.dsh-tools-usageCol.is-today .dsh-tools-usageColBar{background:var(--dsw-alias-brand-primary,#3b82f6);}',
-      '.dsh-tools-usageFoot{display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18));color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-size:11px;}',
+      '.dsh-tools-usageEyebrow{margin-bottom:5px;font-size:10.5px;font-weight:600;letter-spacing:.06em;color:var(--dsw-alias-label-tertiary,#78787f);}',
+      '.dsh-tools-usageHead{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;}',
+      '.dsh-tools-usageTotal{font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:24px;line-height:1.05;font-weight:600;letter-spacing:-.01em;font-variant-numeric:tabular-nums;}',
+      '.dsh-tools-usageDelta{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums;background:rgba(128,128,128,.12);background:color-mix(in srgb,currentColor 11%,transparent);}',
+      '.dsh-tools-usageDelta.is-up{color:#dc2626;}',
+      '.dsh-tools-usageDelta.is-down{color:#16a34a;}',
+      '.dsh-tools-usageComp{display:flex;gap:2px;height:8px;margin:14px 0 4px;}',
+      '.dsh-tools-usageCompSeg{flex:none;min-width:0;border-radius:999px;transition:width 420ms cubic-bezier(.16,1,.3,1);}',
+      '.dsh-tools-usageBuckets{display:flex;flex-direction:column;gap:1px;}',
+      '.dsh-tools-usageBucketRow{display:flex;align-items:center;gap:8px;height:24px;padding:0 6px;margin:0 -6px;border-radius:7px;}',
+      '.dsh-tools-usageBucketRow:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}',
+      '.dsh-tools-usageDot{width:8px;height:8px;border-radius:3px;flex:none;}',
+      '.dsh-tools-usageBucketName{flex:1;min-width:0;color:var(--dsw-alias-label-secondary,#a8a8ad);font-size:12px;}',
+      '.dsh-tools-usageBucketValue{flex:none;font-family:var(--dsw-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:12px;font-variant-numeric:tabular-nums;}',
+      '.dsh-tools-usageBucketShare{width:44px;flex:none;text-align:right;color:var(--dsw-alias-label-tertiary,#78787f);font-size:11px;font-variant-numeric:tabular-nums;}',
+      '.dsh-tools-usageStats{display:flex;gap:8px;margin:12px 0 0;}',
+      '.dsh-tools-usageStat{flex:1;min-width:0;padding:8px 10px;border-radius:10px;background:var(--u-fill);}',
+      '.dsh-tools-usageStatValue{font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;}',
+      '.dsh-tools-usageStatLabel{margin-top:1px;font-size:10.5px;color:var(--dsw-alias-label-tertiary,#78787f);}',
+      '.dsh-tools-usageChartTitle{margin:14px 0 7px;font-size:10.5px;font-weight:600;letter-spacing:.06em;color:var(--dsw-alias-label-tertiary,#78787f);}',
+      '.dsh-tools-usageChart{display:flex;flex-direction:column;}',
+      '.dsh-tools-usageChartRow{position:relative;display:flex;align-items:flex-end;gap:6px;height:44px;padding-bottom:5px;border-bottom:1px solid var(--u-line);}',
+      '.dsh-tools-usageCol{flex:1;display:flex;align-items:flex-end;justify-content:center;height:100%;min-width:0;}',
+      '.dsh-tools-usageColBar{width:100%;max-width:18px;min-height:3px;border-radius:4px 4px 2px 2px;background:var(--u-bar);transition:height 300ms cubic-bezier(.16,1,.3,1);}',
+      '.dsh-tools-usageCol.is-today .dsh-tools-usageColBar{background:var(--dsw-alias-brand-primary,#3b82f6);box-shadow:0 0 10px rgba(59,130,246,.35);}',
+      '.dsh-tools-usageCol:hover .dsh-tools-usageColBar{filter:brightness(1.45);}',
+      '.dsh-tools-usageChartTags{display:flex;gap:6px;margin-top:4px;}',
+      '.dsh-tools-usageColTag{flex:1;min-width:0;text-align:center;font-size:9.5px;line-height:1;color:var(--dsw-alias-label-tertiary,#78787f);font-variant-numeric:tabular-nums;}',
+      '.dsh-tools-usageColTag.is-today{color:var(--dsw-alias-label-secondary,#a8a8ad);font-weight:600;}',
+      '.dsh-tools-usageTip{position:absolute;bottom:calc(100% + 9px);left:0;transform:translateX(-50%);padding:5px 9px;border-radius:7px;background:var(--dsw-alias-bg-overlay,#242428);border:1px solid var(--u-line);box-shadow:0 4px 14px rgba(15,17,23,.18);white-space:nowrap;font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-primary,#f2f2f2);pointer-events:none;opacity:0;transition:opacity 120ms ease;z-index:3;}',
+      '.dsh-tools-usageTip.is-open{opacity:1;}',
+      '.dsh-tools-usageTipDate{color:var(--dsw-alias-label-tertiary,#78787f);font-size:10.5px;}',
+      '.dsh-tools-usageTipValue{font-family:var(--dsw-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-weight:600;}',
+      '.dsh-tools-usageTipValue .dsh-tools-usageTipReq{margin-left:6px;color:var(--dsw-alias-label-secondary,#a8a8ad);font-weight:400;}',
+      '.dsh-tools-usageFoot{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:9px;border-top:1px solid var(--u-line);color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-size:11px;}',
       '.dsh-tools-usageStamp{flex:1;min-width:0;}',
       '.dsh-tools-usageRefresh{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:default;flex:none;}',
       '.dsh-tools-usageRefresh:hover:not(:disabled),.dsh-tools-usageRefresh:focus-visible:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary);outline:none;}',
@@ -544,7 +640,7 @@ window.__ModuleLoader__.load({
       '.dsh-tools-usageSkelBar:nth-child(2){width:78%;animation-delay:.12s;}',
       '.dsh-tools-usageSkelBar:nth-child(3){width:56%;animation-delay:.24s;}',
       '@keyframes dsh-tools-usagePulse{0%,100%{opacity:.45;}50%{opacity:.9;}}',
-      '@media (prefers-reduced-motion: reduce){.dsh-tools-usageBarFill,.dsh-tools-usageColBar{transition:none;}.dsh-tools-usageSkelBar{animation:none;}}',
+      '@media (prefers-reduced-motion: reduce){.dsh-tools-usageCompSeg,.dsh-tools-usageColBar,.dsh-tools-usageTip{transition:none;}.dsh-tools-usageSkelBar{animation:none;}}',
     ].join('\n');
 
     function ensureUsageStyles() {
@@ -610,7 +706,7 @@ window.__ModuleLoader__.load({
         if (el === null || anchor === null || anchor.isConnected !== true) return;
         const rect = anchor.getBoundingClientRect();
         const margin = 8;
-        const width = 272;
+        const width = 280;
         let left = Math.round(rect.left);
         left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
         let top = Math.round(rect.top) - el.offsetHeight - 8;
@@ -660,25 +756,38 @@ window.__ModuleLoader__.load({
 
         const today = data?.today;
         const buckets = [
-          ['usageInput', today?.inputTokens ?? 0, 0.95],
-          ['usageOutput', today?.outputTokens ?? 0, 0.72],
-          ['usageCacheRead', today?.cacheReadTokens ?? 0, 0.5],
-          ['usageCacheWrite', today?.cacheWriteTokens ?? 0, 0.32],
+          ['usageInput', today?.inputTokens ?? 0, 'var(--u-in,#0284c7)'],
+          ['usageOutput', today?.outputTokens ?? 0, 'var(--u-out,#d97706)'],
+          ['usageCacheRead', today?.cacheReadTokens ?? 0, 'var(--u-cr,#3b82f6)'],
+          ['usageCacheWrite', today?.cacheWriteTokens ?? 0, 'var(--u-cw,#7c3aed)'],
         ];
-        const maxBucket = Math.max(1, ...buckets.map(([, value]) => value));
-        const isEmpty = (today?.total ?? 0) === 0 && (today?.requests ?? 0) === 0;
+        const totalTokens = today?.total ?? 0;
+        const isEmpty = totalTokens === 0 && (today?.requests ?? 0) === 0;
 
+        // eyebrow + hero total + vs-yesterday delta chip
+        const eyebrow = document.createElement('div');
+        eyebrow.className = 'dsh-tools-usageEyebrow';
+        eyebrow.textContent = t('usageTitle');
         const head = document.createElement('div');
         head.className = 'dsh-tools-usageHead';
-        const title = document.createElement('div');
-        title.className = 'dsh-tools-usageHeadTitle';
-        title.textContent = t('usageTitle');
         const total = document.createElement('div');
         total.className = 'dsh-tools-usageTotal';
-        total.title = String(today?.total ?? 0);
-        total.textContent = formatTokens(today?.total ?? 0);
-        head.append(title, total);
-        el.append(head);
+        total.title = String(totalTokens);
+        total.textContent = formatTokens(totalTokens);
+        head.append(total);
+        const allDays = Array.isArray(data?.days) ? data.days : [];
+        const yesterday = allDays.length >= 2 ? allDays[allDays.length - 2] : null;
+        if (yesterday !== null && (yesterday.total ?? 0) > 0 && totalTokens > 0) {
+          const pct = Math.max(-999, Math.min(999, Math.round(((totalTokens - yesterday.total) / yesterday.total) * 100)));
+          if (pct !== 0) {
+            const delta = document.createElement('div');
+            delta.className = `dsh-tools-usageDelta ${pct > 0 ? 'is-up' : 'is-down'}`;
+            delta.title = `${t('usageWeek')} Δ`;
+            delta.textContent = `${pct > 0 ? '↑' : '↓'}${Math.abs(pct)}%`;
+            head.append(delta);
+          }
+        }
+        el.append(eyebrow, head);
 
         if (isEmpty) {
           const empty = document.createElement('div');
@@ -687,34 +796,61 @@ window.__ModuleLoader__.load({
           empty.textContent = t('usageEmpty');
           el.append(empty);
         } else {
+          // stacked composition bar (proportions of today's total)
+          const comp = document.createElement('div');
+          comp.className = 'dsh-tools-usageComp';
+          buckets.forEach(([, value], i) => {
+            const seg = document.createElement('div');
+            seg.className = 'dsh-tools-usageCompSeg';
+            seg.style.background = buckets[i][2];
+            seg.style.width = `${Math.max(0, Math.round((value / Math.max(1, totalTokens)) * 100))}%`;
+            seg.style.transitionDelay = `${i * 40}ms`;
+            comp.append(seg);
+          });
+          // legend rows: dot + label + value + share
           const rows = document.createElement('div');
           rows.className = 'dsh-tools-usageBuckets';
-          for (const [key, value, opacity] of buckets) {
+          for (const [key, value, color] of buckets) {
             const row = document.createElement('div');
             row.className = 'dsh-tools-usageBucketRow';
+            const dot = document.createElement('div');
+            dot.className = 'dsh-tools-usageDot';
+            dot.style.background = color;
             const name = document.createElement('div');
             name.className = 'dsh-tools-usageBucketName';
             name.textContent = t(key);
             const valueEl = document.createElement('div');
             valueEl.className = 'dsh-tools-usageBucketValue';
             valueEl.textContent = formatTokens(value);
-            const bar = document.createElement('div');
-            bar.className = 'dsh-tools-usageBar';
-            const fill = document.createElement('div');
-            fill.className = 'dsh-tools-usageBarFill';
-            fill.style.width = `${Math.round((value / maxBucket) * 100)}%`;
-            fill.style.opacity = String(opacity);
-            bar.append(fill);
-            row.append(name, valueEl, bar);
+            const share = document.createElement('div');
+            share.className = 'dsh-tools-usageBucketShare';
+            share.textContent = `${Math.round((value / Math.max(1, totalTokens)) * 100)}%`;
+            row.append(dot, name, valueEl, share);
             rows.append(row);
           }
-          el.append(rows);
+          el.append(comp, rows);
         }
 
-        const meta = document.createElement('div');
-        meta.className = 'dsh-tools-usageMeta';
-        meta.textContent = `${t('usageRequests')} ${today?.requests ?? 0} · ${t('usageSessions')} ${data?.activeSessions ?? 0}`;
-        el.append(meta);
+        // request / active-session stat cells
+        const stats = document.createElement('div');
+        stats.className = 'dsh-tools-usageStats';
+        const statDefs = [
+          [String((today?.requests ?? 0).toLocaleString()), t('usageRequests')],
+          [String((data?.activeSessions ?? 0).toLocaleString()), t('usageSessions')],
+        ];
+        for (const [valueText, labelText] of statDefs) {
+          const cell = document.createElement('div');
+          cell.className = 'dsh-tools-usageStat';
+          const v = document.createElement('div');
+          v.className = 'dsh-tools-usageStatValue';
+          v.textContent = valueText;
+          const l = document.createElement('div');
+          l.className = 'dsh-tools-usageStatLabel';
+          l.textContent = labelText;
+          cell.append(v, l);
+          stats.append(cell);
+        }
+        el.append(stats);
 
         // last-7-days mini chart (payload carries 14; show the recent week)
         const days = Array.isArray(data?.days) ? data.days.slice(-7) : [];
@@ -724,18 +860,74 @@ window.__ModuleLoader__.load({
           chartTitle.textContent = t('usageWeek');
           const chart = document.createElement('div');
           chart.className = 'dsh-tools-usageChart';
+          const row = document.createElement('div');
+          row.className = 'dsh-tools-usageChartRow';
+          const tags = document.createElement('div');
+          tags.className = 'dsh-tools-usageChartTags';
           const maxDay = Math.max(1, ...days.map((day) => day.total ?? 0));
+          const dayNames = String(t('usageDayNames') || '').split(',');
+          const weekdayOf = (key) => {
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key ?? ''));
+            if (!m) return '';
+            const idx = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay();
+            return dayNames[idx] ?? '';
+          };
+          // one shared tooltip repositioned over the hovered column (instant, no native title lag)
+          const tip = document.createElement('div');
+          tip.className = 'dsh-tools-usageTip';
+          tip.setAttribute('aria-hidden', 'true');
+          const tipDate = document.createElement('div');
+          tipDate.className = 'dsh-tools-usageTipDate';
+          const tipValue = document.createElement('div');
+          tipValue.className = 'dsh-tools-usageTipValue';
+          tip.append(tipDate, tipValue);
+          const hideTip = () => { tip.className = 'dsh-tools-usageTip'; };
           for (const day of days) {
             const col = document.createElement('div');
             col.className = `dsh-tools-usageCol${day.isToday ? ' is-today' : ''}`;
             const bar = document.createElement('div');
             bar.className = 'dsh-tools-usageColBar';
-            const height = Math.max(2, Math.round(((day.total ?? 0) / maxDay) * 34));
+            const height = Math.max(3, Math.round(((day.total ?? 0) / maxDay) * 38));
             bar.style.height = `${height}px`;
-            col.title = `${day.day} · ${formatTokens(day.total ?? 0)}`;
+            const mmdd = String(day.day ?? '').slice(5);
+            const weekday = weekdayOf(day.day);
+            const dateText = `${mmdd}${weekday ? ` ${weekday}` : ''}${day.isToday ? ` · ${t('usageTodayLabel')}` : ''}`;
+            const totalText = formatTokens(day.total ?? 0);
+            col.setAttribute('role', 'img');
+            col.setAttribute('aria-label', `${dateText} · ${totalText} · ${t('usageRequests')} ${day.requests ?? 0}`);
+            const showTip = () => {
+              tipDate.textContent = dateText;
+              tipValue.textContent = '';
+              const valueText = document.createElement('span');
+              valueText.textContent = totalText;
+              const req = document.createElement('span');
+              req.className = 'dsh-tools-usageTipReq';
+              req.textContent = `${t('usageRequests')} ${day.requests ?? 0}`;
+              tipValue.append(valueText, req);
+              tip.className = 'dsh-tools-usageTip is-open';
+              // clamp horizontally inside the chart so edge columns stay readable
+              const rowWidth = row.offsetWidth || 0;
+              const center = (col.offsetLeft ?? 0) + (col.offsetWidth || 0) / 2;
+              let x = center;
+              if (rowWidth > 0) {
+                const half = (tip.offsetWidth || 0) / 2;
+                if (x - half < 0) x = half;
+                if (x + half > rowWidth) x = Math.max(half, rowWidth - half);
+              }
+              tip.style.left = `${Math.round(x)}px`;
+            };
+            col.addEventListener('mouseenter', showTip);
+            col.addEventListener('mouseleave', hideTip);
             col.append(bar);
-            chart.append(col);
+            row.append(col);
+            const tag = document.createElement('div');
+            tag.className = `dsh-tools-usageColTag${day.isToday ? ' is-today' : ''}`;
+            tag.textContent = day.isToday ? t('usageTodayShort') : (weekday.length === 2 ? weekday.slice(1) : weekday);
+            tags.append(tag);
           }
+          row.append(tip);
+          row.addEventListener('mouseleave', hideTip);
+          chart.append(row, tags);
           el.append(chartTitle, chart);
         }
 
@@ -888,45 +1080,61 @@ window.__ModuleLoader__.load({
         return card?.querySelector('[contenteditable="true"]') ?? null;
       };
 
-      // User rows render the message text more than once (a visible copy plus
-      // a hidden preview/edit copy) and inline timestamps. Strip stamps, then
-      // collapse the "TEXT stamp TEXT" duplication so only the plain text the
-      // user actually typed remains.
-      const cleanHistoryText = (raw) => {
+      // A timestamp that can sit between the visible text and an extra copy of
+      // it inside one row's innerText: zh dates, times, ISO dates, en dates.
+      const STAMP_LINE = /^(?:\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?|\d{1,2}月\s*\d{1,2}日(?:\s*\d{1,2}:\d{2}(?::\d{2})?)?|\d{4}-\d{1,2}-\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?)?)$/;
+      const STAMP_GAP = /^\s*(?:\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?|\d{1,2}月\s*\d{1,2}日(?:\s*\d{1,2}:\d{2}(?::\d{2})?)?|\d{4}-\d{1,2}-\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?)?|[A-Za-z]{3,9}\s+\d{1,2}(?:,?\s*\d{4})?|[A-Za-z]{3,9},?\s+\d{1,2},?\s+\d{4})\s*$/;
+
+      // User rows can render the message text more than once (a visible copy
+      // plus a hidden preview/edit copy) plus an inline clock stamp. The
+      // preferred reader takes the bubble's own text — the clock lives outside
+      // [data-message-bubble], so no stamp stripping is needed there. The full
+      // row fallback additionally folds the "TEXT stamp TEXT" duplication so
+      // only the plain text the user actually typed remains. Folding only ever
+      // removes a copy separated from its twin by an actual timestamp, so real
+      // repeated text ("哈哈哈哈哈哈哈哈") is never mangled.
+      const cleanHistoryText = (raw, allowFold = false) => {
         let text = String(raw ?? '').replace(/\u00a0/g, ' ');
-        // Inline stamps → newline separators (zh dates, times, en dates, ISO).
-        text = text
-          .replace(/\d{1,2}月\s*\d{1,2}日(\s*\d{1,2}:\d{2}(?::\d{2})?)?/g, '\n')
-          .replace(/\d{4}-\d{1,2}-\d{1,2}([T ]\d{1,2}:\d{2}(?::\d{2})?)?/g, '\n')
-          .replace(/\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(,?\s*\d{4})?\b/gi, '\n');
-        // Standalone time lines are dropped below; inline times inside a
-        // sentence ("会议改到 14:30") must survive.
+        // Standalone stamp lines are dropped; times inside a sentence
+        // ("会议改到 14:30") survive because they are not whole lines.
         const lines = text.split('\n').map((line) => line.trim())
-          .filter((line) => line !== ''
-            && !/^\d{1,2}:\d{2}(\s*[APap][Mm])?$/.test(line));
+          .filter((line) => line !== '' && !STAMP_LINE.test(line));
         text = lines.join('\n').trim();
-        // Collapse exact duplicated halves ("TEXT\nTEXT" or "TEXTTEXT").
-        for (let round = 0; round < 2; round += 1) {
-          if (text.length < 8) break;
-          const mid = Math.floor(text.length / 2);
-          for (let cut = mid; cut >= mid - 400 && cut >= 4; cut -= 1) {
-            const head = text.slice(0, cut).trim();
-            const tail = text.slice(cut).trim();
-            if (head !== '' && head === tail) { text = head; cut = -1; round = 2; break; }
-          }
-          if (text.length < 8) break;
+        if (!allowFold) return text;
+        // Whole-line twins with only stamp lines between them.
+        if (lines.length >= 2 && lines[0].length >= 2 && lines[0] === lines[lines.length - 1]
+          && lines.slice(1, -1).every((line) => STAMP_LINE.test(line) || STAMP_GAP.test(line.trim()))) {
+          return lines[0];
+        }
+        // Inline twins: identical head and tail with a timestamp-only gap
+        // ("帮我安装 11:11帮我安装"). The gap must be a real timestamp, so
+        // ordinary sentences with repeated phrases are left alone.
+        const max = Math.floor(text.length / 2);
+        for (let len = Math.min(max, 400); len >= 2; len -= 1) {
+          const head = text.slice(0, len);
+          const tail = text.slice(text.length - len);
+          if (head !== tail) continue;
+          const gap = text.slice(len, text.length - len);
+          if (gap !== '' && STAMP_GAP.test(gap)) return head;
         }
         return text;
       };
 
       const readHistory = () => {
-        const rows = document.querySelectorAll('[data-chat-flow-kind="user"]');
+        // Durable user rows only: pending echoes render without the flow-kind
+        // wrapper, so a message never appears twice from echo + durable.
+        const rows = document.querySelectorAll('[data-chat-flow-kind="user"], [data-chat-flow-kind="steering"]');
         const items = [];
         for (const row of rows) {
-          const text = cleanHistoryText(row.innerText);
+          const bubble = row.querySelector('[data-message-bubble]');
+          const fromBubble = bubble !== null;
+          const text = cleanHistoryText(fromBubble ? bubble.innerText : row.innerText, !fromBubble);
           if (text !== '') items.push(text);
         }
-        return items;
+        // Collapse adjacent twins (same text mounted in neighboring rows after
+        // retries/rewind forks) so stepping through history is one step per
+        // distinct message.
+        return items.filter((text, index) => index === 0 || text !== items[index - 1]);
       };
 
       const isCaretAtVeryStart = (editor) => {
@@ -944,61 +1152,116 @@ window.__ModuleLoader__.load({
         return false;
       };
 
-      let pointer = null;   // null = at the live draft; otherwise index into history
+      // Navigation tracks the recalled TEXT, not an array index: readHistory()
+      // rebuilds the array on every keypress and rows mount/unmount as the
+      // session streams, which used to shift a raw pointer and make ArrowUp
+      // replay the same entry or get stuck. `hintIndex` only survives the
+      // unlikely case of the recalled row vanishing between keypresses.
+      let recalled = null;   // null = at the live draft; otherwise the history text in the box
+      let hintIndex = null;  // last known index of `recalled` in the history array
       let draft = '';
+      let loading = false;   // true while loadInto drives the editor itself
       const loadInto = (editor, text) => {
-        editor.focus();
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, text);
-        editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        loading = true;
+        try {
+          editor.focus();
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, text);
+          editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        } finally {
+          loading = false;
+        }
+      };
+
+      const locateRecalled = (history) => {
+        for (let i = history.length - 1; i >= 0; i -= 1) {
+          if (history[i] === recalled) return i;
+        }
+        const hint = hintIndex === null ? history.length : hintIndex;
+        return Math.min(hint, history.length - 1);
       };
 
       const onKeyDown = (event) => {
         if (!featureFlags.history) return;
         const editor = editorFor(event.target);
         if (editor === null) return;
-        if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) {
-          pointer = null;
-          return;
-        }
+        if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
         if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
           const history = readHistory();
+          // The composer can also be rewritten from the outside without any
+          // beforeinput (Lexical clears it after send). If the text on screen
+          // no longer matches what we believe we recalled, the pointer is
+          // stale: drop back to live-draft mode so the next ArrowUp re-enters
+          // at the newest entry instead of walking from a dead position.
+          if (recalled !== null && cleanHistoryText(editor.innerText) !== recalled) {
+            recalled = null;
+            hintIndex = null;
+          }
           if (event.key === 'ArrowUp') {
-            if (pointer === null) {
+            if (recalled === null) {
               if (history.length === 0) return;
-              // Only enter history mode from an empty box or the very start of
-              // the text — otherwise ArrowUp must keep moving the caret.
-              if (!isCaretAtVeryStart(editor)) return;
+              // Enter history from an empty box, any caret position in a
+              // single-line draft (terminal habit: ↑ always recalls), or the
+              // very start of a multiline draft — there ArrowUp must keep
+              // moving the caret between lines instead.
+              const singleLine = !(editor.innerText ?? '').includes('\n');
+              if (!singleLine && !isCaretAtVeryStart(editor)) return;
               draft = editor.innerText ?? '';
-              pointer = history.length - 1;
+              hintIndex = history.length - 1;
+              recalled = history[hintIndex];
             } else {
-              pointer = Math.max(0, pointer - 1);
+              // Walk one distinct entry older; stay put at the oldest.
+              let i = locateRecalled(history);
+              let j = i - 1;
+              while (j >= 0 && history[j] === recalled) j -= 1;
+              if (j < 0) return; // already at the oldest distinct entry
+              hintIndex = j;
+              recalled = history[j];
             }
             event.preventDefault();
             event.stopPropagation();
-            loadInto(editor, history[pointer]);
+            loadInto(editor, recalled);
             return;
           }
-          if (pointer === null) return; // ArrowDown at the draft: caret moves normally
+          if (recalled === null) return; // ArrowDown at the draft: caret moves normally
           event.preventDefault();
           event.stopPropagation();
-          const next = pointer + 1;
-          if (next >= history.length) {
-            pointer = null;
+          const i = locateRecalled(history);
+          let j = i + 1;
+          while (j < history.length && history[j] === recalled) j += 1;
+          if (j >= history.length) {
+            recalled = null;
+            hintIndex = null;
             loadInto(editor, draft);
           } else {
-            pointer = next;
-            loadInto(editor, history[next]);
+            hintIndex = j;
+            recalled = history[j];
+            loadInto(editor, history[j]);
           }
           return;
         }
-        if (pointer !== null) pointer = null; // any other key: back to normal editing
+      };
+
+      // Any real edit of the composer text (typing, IME, paste, cut, drop,
+      // submit clearing the box) returns to live-draft mode. beforeinput fires
+      // for all of those; loadInto's own execCommand writes are excluded via
+      // the `loading` guard, so recalling never resets itself.
+      const onBeforeInput = (event) => {
+        if (loading || recalled === null) return;
+        const target = event.target;
+        if (target instanceof Element && target.closest?.('[data-composer-card]') != null) {
+          recalled = null;
+          hintIndex = null;
+        }
       };
 
       document.addEventListener('keydown', onKeyDown, true);
+      document.addEventListener('beforeinput', onBeforeInput, true);
       return () => {
         document.removeEventListener('keydown', onKeyDown, true);
-        pointer = null;
+        document.removeEventListener('beforeinput', onBeforeInput, true);
+        recalled = null;
+        hintIndex = null;
       };
     }
 
@@ -1039,6 +1302,21 @@ window.__ModuleLoader__.load({
 
         const call = (method, payload) =>
           ctx.connection.rpc.call('/api', 'dsh-tools', { method, payload });
+
+        // TEMP diagnostic beacon: lands in the host debug log via debug.beacon.
+        const beacon = (tag, extra) => {
+          try {
+            Promise.resolve(call('debug.beacon', { tag, ...(extra ?? {}) }))
+              .catch(() => {});
+          } catch { /* ignore */ }
+        };
+        beacon('client-apply');
+        // Bind the usage RPC EARLY and never unbind: HMR swaps dispose the old
+        // apply AFTER the new one registers, so a cleanup-time `usageCall = null`
+        // races the new registration and leaves the store silently erroring
+        // with 'rpc unavailable' (no RPC, no log entry — chip dead).
+        usageCall = (method, payload) => call(method, payload);
+        usageBeacon = (tag, extra) => { try { beacon(tag, extra); } catch { /* ignore */ } };
 
         // ---- composer assist buttons (slot conversation.input.right) ----
         // One registrar, two slot items: 生成 (intent reply from the last AI
@@ -1330,6 +1608,7 @@ window.__ModuleLoader__.load({
             ['history', 'fHistory'],
             ['sc', 'fSc'],
             ['usage', 'fUsage'],
+            ['openSidebar', 'fOpenSidebar'],
             ['phrases', 'fPhrases'],
           ];
 
@@ -1657,8 +1936,11 @@ window.__ModuleLoader__.load({
             }
             return fallback ?? '';
           };
+          // v0.7.8: wrapper defaults to a centered flex box (dsh-tools-scIco)
+          // — raw inline <svg> rides the text baseline (descender space below
+          // it), which made glyphs float high and misalign with labels.
           const icon = (glyph, className) => React.createElement('span', {
-            className,
+            className: className ?? 'dsh-tools-scIco',
             dangerouslySetInnerHTML: { __html: glyph },
           });
           const STATUS_DICT = { A: 'stA', M: 'stM', D: 'stD', R: 'stR' };
@@ -1682,14 +1964,137 @@ window.__ModuleLoader__.load({
           React.createElement('circle', { cx: 6, cy: 18, r: 3 }),
           React.createElement('path', { d: 'M18 9a9 9 0 0 1-9 9' }));
 
-          const DiffView = ({ text }) => React.createElement('pre', { className: 'dsh-tools-scDiff' },
-            String(text ?? '').split('\n').map((line, index) => {
-              let cls = 'dsh-tools-dl';
-              if (line.startsWith('+')) cls += ' is-add';
-              else if (line.startsWith('-')) cls += ' is-del';
-              else if (line.startsWith('@@')) cls += ' is-hunk';
-              return React.createElement('span', { className: cls, key: index }, line);
-            }));
+          // v0.7.9: diff layout toggle (用户需求：改动详情页切换 横向/纵向 比对).
+          // Preference persists via localStorage when available (guarded —
+          // the render-test sandbox has no DOM storage).
+          const DIFF_STYLE_KEY = 'dsh-tools.scDiffStyle';
+          const readDiffStyle = () => {
+            try {
+              return globalThis.localStorage?.getItem(DIFF_STYLE_KEY) === 'split' ? 'split' : 'unified';
+            } catch {
+              return 'unified';
+            }
+          };
+          const writeDiffStyle = (style) => {
+            try {
+              globalThis.localStorage?.setItem(DIFF_STYLE_KEY, style);
+            } catch {
+              /* persistence unavailable — keep session-only */
+            }
+          };
+
+          // git diff preamble (diff --git / index / --- / +++ …) only ever
+          // appears before the first @@ hunk header; skip it in both layouts
+          // — the panel already names the file, and VSCode-style diff views
+          // never render this metadata as content.
+          const isDiffPreamble = (line) => /^(diff --git |new file mode |deleted file mode |old mode |new mode |index |similarity index |dissimilarity index |rename from |rename to |Binary file|--- |\+\+\+ )/.test(line);
+
+          // Parse a unified diff into side-by-side rows: pair consecutive
+          // -/+ runs index-by-index and pad the shorter side; context lines
+          // pair with themselves and advance both counters. Hunk headers
+          // carry their own start numbers; '\\ No newline' markers are
+          // cosmetic and dropped. A body with no @@ at all (defensive — the
+          // synthetic untracked diff gained one in v0.7.10) numbers from 1.
+          const parseSplitRows = (text) => {
+            const rows = [];
+            let oldNo = 0;
+            let newNo = 0;
+            let inHunk = false;
+            let numbered = false;
+            let dels = [];
+            let adds = [];
+            const flush = () => {
+              const pairs = Math.max(dels.length, adds.length);
+              for (let i = 0; i < pairs; i += 1) {
+                const del = dels[i];
+                const add = adds[i];
+                rows.push({
+                  oldNo: del === undefined ? '' : del.no,
+                  oldText: del === undefined ? '' : del.text,
+                  oldCls: del === undefined ? '' : ' is-del',
+                  newNo: add === undefined ? '' : add.no,
+                  newText: add === undefined ? '' : add.text,
+                  newCls: add === undefined ? '' : ' is-add',
+                });
+              }
+              dels = [];
+              adds = [];
+            };
+            String(text ?? '').split('\n').forEach((line) => {
+              if (line === '') return;
+              if (inHunk !== true && isDiffPreamble(line)) return;
+              const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+              if (hunk !== null) {
+                flush();
+                oldNo = Number(hunk[1]);
+                newNo = Number(hunk[2]);
+                inHunk = true;
+                rows.push({ hunk: line });
+                return;
+              }
+              if (numbered !== true) {
+                oldNo = 1;
+                newNo = 1;
+                numbered = true;
+              }
+              if (line.startsWith('-')) {
+                dels.push({ no: String(oldNo), text: line.slice(1) });
+                oldNo += 1;
+                return;
+              }
+              if (line.startsWith('+')) {
+                adds.push({ no: String(newNo), text: line.slice(1) });
+                newNo += 1;
+                return;
+              }
+              if (line.startsWith('\\')) return;
+              flush();
+              rows.push({
+                oldNo: String(oldNo),
+                oldText: line.slice(1),
+                oldCls: '',
+                newNo: String(newNo),
+                newText: line.slice(1),
+                newCls: '',
+              });
+              oldNo += 1;
+              newNo += 1;
+            });
+            flush();
+            return rows;
+          };
+
+          const DiffView = ({ text, split }) => {
+            if (split !== true) {
+              const kept = [];
+              let inHunk = false;
+              String(text ?? '').split('\n').forEach((line) => {
+                if (inHunk !== true && isDiffPreamble(line)) return;
+                if (line.startsWith('@@')) inHunk = true;
+                kept.push(line);
+              });
+              return React.createElement('pre', { className: 'dsh-tools-scDiff' },
+                kept.map((line, index) => {
+                  let cls = 'dsh-tools-dl';
+                  if (line.startsWith('+')) cls += ' is-add';
+                  else if (line.startsWith('-')) cls += ' is-del';
+                  else if (line.startsWith('@@')) cls += ' is-hunk';
+                  return React.createElement('span', { className: cls, key: index }, line);
+                }));
+            }
+            const cells = [];
+            parseSplitRows(text).forEach((row, index) => {
+              if (row.hunk !== undefined) {
+                cells.push(React.createElement('div', { className: 'dsh-tools-dh', key: `h${index}` }, row.hunk));
+                return;
+              }
+              cells.push(React.createElement('span', { className: 'dsh-tools-dno', key: `a${index}` }, row.oldNo));
+              cells.push(React.createElement('span', { className: `dsh-tools-dc${row.oldCls}`, key: `b${index}` }, row.oldText));
+              cells.push(React.createElement('span', { className: 'dsh-tools-dno is-new', key: `c${index}` }, row.newNo));
+              cells.push(React.createElement('span', { className: `dsh-tools-dc${row.newCls}`, key: `d${index}` }, row.newText));
+            });
+            return React.createElement('div', { className: 'dsh-tools-scDiffSplit' }, cells);
+          };
 
           const ScPanel = () => {
             const [repos, setRepos] = React.useState(null);      // null = loading
@@ -1702,10 +2107,12 @@ window.__ModuleLoader__.load({
             const [diffState, setDiffState] = React.useState({});
             const [msgMap, setMsgMap] = React.useState({});
             const [busy, setBusy] = React.useState({});           // repo.id -> {op,error,note}
+            const [diffStyle, setDiffStyle] = React.useState(readDiffStyle); // 'unified' | 'split' (v0.7.9)
 
             const loadAll = React.useCallback(async () => {
               setRepos(null);
               setReposError('');
+              setBatchNote('');
               // Let the sessions capture settle (hot-reload race) so the scan
               // targets the workspace the user is in, not nothing. Skipped
               // entirely (zero extra microtask) once the service is captured.
@@ -1872,6 +2279,77 @@ window.__ModuleLoader__.load({
               }
             };
 
+            // v0.7.5 更新代码 / 更新数据库 — per-repo and (via runBatch) sweep-
+            // all variants. Outcomes resolve to {ok} / {skipped} so the batch
+            // loop can count them; notes/errors land in the group's busy row.
+            const doPull = async (repo) => {
+              if (busy[repo.id]?.op) return { ok: false };
+              setBusyState(repo.id, { op: 'pull', error: '', note: t('scPulling') });
+              try {
+                const r = await call('sc.pull', { repo: repo.path });
+                if (r?.ok === true) {
+                  setBusyState(repo.id, { op: null, note: t('scPulled') });
+                  void refreshRepo(repo);
+                  return { ok: true };
+                }
+                setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
+                return { ok: false };
+              } catch (error) {
+                setBusyState(repo.id, { op: null, error: error?.message ?? String(error) });
+                return { ok: false };
+              }
+            };
+
+            const doPrisma = async (repo) => {
+              if (busy[repo.id]?.op) return { ok: false };
+              setBusyState(repo.id, { op: 'prisma', error: '', note: t('scDbRunning') });
+              try {
+                const r = await call('sc.prisma', { repo: repo.path });
+                if (r?.ok === true) {
+                  setBusyState(repo.id, { op: null, note: t('scDbDone') });
+                  void refreshRepo(repo);
+                  return { ok: true };
+                }
+                if (r?.error?.code === 'no-prisma-scripts') {
+                  setBusyState(repo.id, { op: null, note: t('scNoPrisma') });
+                  return { ok: false, skipped: true };
+                }
+                setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
+                return { ok: false };
+              } catch (error) {
+                setBusyState(repo.id, { op: null, error: error?.message ?? String(error) });
+                return { ok: false };
+              }
+            };
+
+            // Top-bar 更新代码/更新数据库 buttons sweep EVERY listed repo
+            // sequentially (parallel git/pnpm across repos would race shared
+            // remotes and stores); progress + the final ok/skipped/failed
+            // summary show in the bar, per-repo outcomes in each group.
+            const [batch, setBatch] = React.useState(null);   // {op,done,total}
+            const [batchNote, setBatchNote] = React.useState('');
+            const runBatch = async (op) => {
+              if (batch !== null) return;
+              const list = Array.isArray(repos) ? repos : [];
+              if (list.length === 0) return;
+              setBatch({ op, done: 0, total: list.length });
+              let okCount = 0;
+              let skipCount = 0;
+              let failCount = 0;
+              for (let index = 0; index < list.length; index += 1) {
+                setBatch({ op, done: index + 1, total: list.length });
+                setBatchNote(`${t(op === 'pull' ? 'scUpdateCode' : 'scUpdateDb')} ${index + 1}/${list.length}…`);
+                const outcome = op === 'pull' ? await doPull(list[index]) : await doPrisma(list[index]);
+                if (outcome.skipped === true) skipCount += 1;
+                else if (outcome.ok === true) okCount += 1;
+                else failCount += 1;
+              }
+              setBatchNote(`${t(op === 'pull' ? 'scPulled' : 'scDbDone')} ${okCount}`
+                + (skipCount > 0 ? ` · ${t('scBatchSkipped')} ${skipCount}` : '')
+                + (failCount > 0 ? ` · ${t('scBatchFailed')} ${failCount}` : ''));
+              setBatch(null);
+            };
+
             if (!featureFlags.sc) return null;
 
             const repoGroups = (repos ?? []).map((repo) => {
@@ -1887,6 +2365,7 @@ window.__ModuleLoader__.load({
                   React.createElement('button', {
                     type: 'button',
                     className: 'dsh-tools-scGroupHeadMain',
+                    'aria-expanded': isOpen,
                     onClick: () => setExpanded((current) => ({ ...current, [repo.id]: !isOpen })),
                   },
                   icon(SC_CHEVRON_GLYPH, `dsh-tools-scChev${isOpen ? ' is-open' : ''}`),
@@ -1903,11 +2382,32 @@ window.__ModuleLoader__.load({
                     className: 'dsh-tools-scMini',
                     onClick: () => clearSelection(repo.id),
                   }, t('scClear')) : null,
+                  // v0.7.7 divider between the text controls and the icon
+                  // cluster; only present when there is something to divide.
+                  st.files.length > 0 || sel.size > 0
+                    ? React.createElement('div', { className: 'dsh-tools-scVDiv', 'aria-hidden': 'true' }) : null,
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scIconBtn',
+                    title: t('scUpdateCodeTitle'),
+                    'aria-label': t('scUpdateCodeTitle'),
+                    disabled: anyBusy || batch !== null,
+                    onClick: () => { void doPull(repo); },
+                  }, icon(SC_PULL_GLYPH)),
+                  React.createElement('button', {
+                    type: 'button',
+                    className: 'dsh-tools-scIconBtn',
+                    title: t('scUpdateDbTitle'),
+                    'aria-label': t('scUpdateDbTitle'),
+                    disabled: anyBusy || batch !== null,
+                    onClick: () => { void doPrisma(repo); },
+                  }, icon(SC_DB_GLYPH)),
                   React.createElement('button', {
                     type: 'button',
                     className: 'dsh-tools-scIconBtn',
                     title: t('scPush'),
-                    disabled: anyBusy,
+                    'aria-label': t('scPush'),
+                    disabled: anyBusy || batch !== null,
                     onClick: () => { void doPush(repo); },
                   }, icon(SC_PUSH_GLYPH))),
                 isOpen ? React.createElement('div', { className: 'dsh-tools-scFiles' },
@@ -1929,6 +2429,7 @@ window.__ModuleLoader__.load({
                           type: 'checkbox',
                           checked: isSel,
                           title: t('scSelectHint'),
+                          'aria-label': file.path,
                           onChange: () => toggleFile(repo.id, file.path),
                         }),
                         React.createElement('button', {
@@ -1946,7 +2447,21 @@ window.__ModuleLoader__.load({
                       diffOpen ? React.createElement('div', null,
                         ds === undefined || ds.loading ? React.createElement('div', { className: 'dsh-tools-scNote', style: { padding: '6px 12px' } }, '…')
                           : (ds.error !== undefined ? React.createElement('div', { className: 'dsh-tools-scNote is-error', style: { padding: '6px 12px' } }, ds.error)
-                            : React.createElement(DiffView, { text: ds.text }))) : null);
+                            : React.createElement(React.Fragment, null,
+                              React.createElement('div', { className: 'dsh-tools-scDiffBar' },
+                                React.createElement('button', {
+                                  type: 'button',
+                                  className: 'dsh-tools-scMini',
+                                  title: t('scDiffStyleTitle'),
+                                  'aria-pressed': diffStyle === 'split' ? 'true' : 'false',
+                                  onClick: () => {
+                                    const next = diffStyle === 'split' ? 'unified' : 'split';
+                                    setDiffStyle(next);
+                                    writeDiffStyle(next);
+                                  },
+                                }, icon(diffStyle === 'split' ? SC_COLS_GLYPH : SC_ROWS_GLYPH),
+                                React.createElement('span', null, diffStyle === 'split' ? t('scDiffSplit') : t('scDiffUnified')))),
+                              React.createElement(DiffView, { text: ds.text, split: diffStyle === 'split' })))) : null);
                   }) : null,
                   st.truncated ? React.createElement('div', { className: 'dsh-tools-scNote', style: { padding: '4px 12px' } }, t('scTruncated')) : null,
                   (busyState.error !== '' && busyState.error !== undefined) || (busyState.note !== '' && busyState.note !== undefined)
@@ -1982,17 +2497,48 @@ window.__ModuleLoader__.load({
               className: 'dsh-tools-scTab',
               role: 'complementary',
               'aria-label': t('sc'),
+              'aria-busy': repos === null,
             },
             React.createElement('div', { className: 'dsh-tools-scHeader' },
               React.createElement('div', { className: 'dsh-tools-scHeaderTitle' },
                 icon(SC_GLYPH),
                 React.createElement('span', null, t('sc'))),
+              // v0.7.6 the two batch buttons live in the header row, beside
+              // the refresh button; they sweep EVERY repository listed below
+              // (the per-group twins act on that repo alone).
+              React.createElement('button', {
+                type: 'button',
+                className: 'dsh-tools-scMini',
+                title: t('scUpdateCodeAllTitle'),
+                disabled: batch !== null || !Array.isArray(repos) || repos.length === 0,
+                onClick: () => { void runBatch('pull'); },
+              }, icon(SC_PULL_GLYPH), React.createElement('span', null, t('scUpdateCode'))),
+              React.createElement('button', {
+                type: 'button',
+                className: 'dsh-tools-scMini',
+                title: t('scUpdateDbAllTitle'),
+                disabled: batch !== null || !Array.isArray(repos) || repos.length === 0,
+                onClick: () => { void runBatch('prisma'); },
+              }, icon(SC_DB_GLYPH), React.createElement('span', null, t('scUpdateDb'))),
+              // v0.7.7 thin divider groups the update pair apart from the
+              // refresh control (visual grouping, review 2026-11-24).
+              React.createElement('div', { className: 'dsh-tools-scVDiv', 'aria-hidden': 'true' }),
               React.createElement('button', {
                 type: 'button',
                 className: 'dsh-tools-scIconBtn',
                 title: t('scRefresh'),
+                'aria-label': t('scRefresh'),
+                disabled: repos === null,
                 onClick: () => { void loadAll(); },
               }, icon(SC_REFRESH_GLYPH))),
+            // Batch progress / summary — a slim conditional row under the
+            // header; hidden entirely while idle. role=status so assistive
+            // tech announces progress and the final summary.
+            batchNote !== '' ? React.createElement('div', { className: 'dsh-tools-scNoteRow', role: 'status' },
+              React.createElement('span', {
+                className: 'dsh-tools-scBatchNote',
+                title: batchNote,
+              }, batchNote)) : null,
             React.createElement('div', { className: 'dsh-tools-scBody' },
               repos === null ? React.createElement('div', { className: 'dsh-tools-scState' }, t('scLoading')) : null,
               repos !== null && reposError !== '' ? React.createElement('div', { className: 'dsh-tools-scState' },
@@ -2068,6 +2614,243 @@ window.__ModuleLoader__.load({
           };
         };
 
+        // ---- right sidebar: expanded by default on a new Session ----
+        //
+        // The app keeps the right sidebar per Session and every new Session
+        // starts with the column collapsed (the Session restored at boot
+        // gets its own persisted layout back). DSH has no setting for this,
+        // so we watch the sidebar controller's `mounted` snapshot — the
+        // Session on screen — and expand the column once for a Session the
+        // user has just created:
+        //   • "new" = blank (no prompt sent yet; New Session may reuse a
+        //     blank of the same workspace), or absent from the session list
+        //     when it first became ready and still younger than
+        //     FRESH_WINDOW_MS;
+        //   • the Session on screen when the controller arrives is left
+        //     alone while it stays there, so its persisted state wins — and
+        //     so is the Session DSH selects while starting up, as long as it
+        //     has a prompt in it (the first `mounted` value after "nothing
+        //     on screen" is that boot selection; a blank one is a new
+        //     Session and opens);
+        //   • each Session is handled once per run: collapsing it afterwards
+        //     sticks, however often the user comes back to it.
+        // `mounted` moves before React renders the selection and the
+        // Session's sidebar store is only adopted in that render — the
+        // controller throws "no session surface is mounted" until then, so
+        // the expand retries briefly. The toggle also moves DOM focus into
+        // the sidebar pane (app behaviour for the header button); a fresh
+        // Session is there to be typed in, so focus goes back.
+        const registerSidebarAutoOpen = () => {
+          if (typeof ctx?.inject !== 'function') return () => {};
+
+          const FRESH_WINDOW_MS = 10 * 60_000;
+          const RETRY_DELAY_MS = 40;
+          const RETRY_LIMIT = 25;
+          const BOOT_BASELINE_FALLBACK_MS = 3000;
+          const SIDEBAR_REGION = '[data-sidebar-right-session]';
+
+          let sidebar = null;        // ctx.sidebarRight
+          let sessions = null;       // ctx.sessions
+          let disposed = false;
+          let lastMounted;           // last value seen on sidebar.mounted
+          let bootExempt = null;     // Session on screen when the controller arrived
+          let bootPending = false;   // nothing on screen yet → the next one is DSH's boot selection
+          let bootCaptured = false;
+          let bootTimer = null;
+          let attempt = null;        // in-flight expand: { id, timer, tries }
+          const bootIds = new Set(); // listed when the session list first became ready
+          const handled = new Set(); // Sessions already expanded (or given up on)
+          const unwire = [];
+          const disposers = [];
+
+          const listSnapshot = () => {
+            try { return sessions?.list?.getSnapshot?.() ?? null; } catch { return null; }
+          };
+
+          const captureBootIds = () => {
+            const list = listSnapshot();
+            if (list === null) return;
+            const ids = Array.isArray(list.ids) ? list.ids : Object.keys(list.byId ?? {});
+            for (const id of ids) bootIds.add(id);
+            bootCaptured = true;
+          };
+
+          const rowOf = (id) => {
+            const row = listSnapshot()?.byId?.[id];
+            return row !== null && row !== undefined && typeof row === 'object' ? row : null;
+          };
+
+          const isNewSession = (id) => {
+            if (id === bootExempt) return false;
+            const row = rowOf(id);
+            if (row === null) return false;
+            // Subagent children are spawned, not created by the user.
+            if (row.origin === 'subagent' || row.parentId !== undefined) return false;
+            if (row.blank === true) return true;
+            if (bootIds.has(id)) return false;
+            const updatedAt = Number(row.updatedAt);
+            return Number.isFinite(updatedAt) && Date.now() - updatedAt < FRESH_WINDOW_MS;
+          };
+
+          const insideSidebar = (node) => {
+            try { return node?.closest?.(SIDEBAR_REGION) != null; } catch { return false; }
+          };
+
+          // Where focus goes back to: the element that had it (when still in
+          // the document), else the main composer.
+          const focusTarget = (previous) => {
+            if (previous !== null && previous !== undefined
+              && previous !== document.body && previous !== document.documentElement
+              && previous.isConnected === true) {
+              return previous;
+            }
+            try { return document.querySelector('[data-composer-card] [contenteditable="true"]') ?? null; } catch { return null; }
+          };
+
+          // Only acts while focus sits in the sidebar (or nowhere): when the
+          // app moved it somewhere useful on its own, that stands.
+          const restoreFocus = (target) => {
+            if (target === null) return;
+            const apply = () => {
+              if (disposed || target.isConnected !== true) return;
+              const active = document.activeElement;
+              if (!insideSidebar(active) && active !== document.body) return;
+              try { target.focus({ preventScroll: true }); } catch { /* not focusable */ }
+            };
+            apply();
+            // A page that focuses itself after mount gets the same answer.
+            setTimeout(apply, 0);
+          };
+
+          const cancelAttempt = () => {
+            if (attempt !== null && attempt.timer !== 0) { try { clearTimeout(attempt.timer); } catch { /* gone */ } }
+            attempt = null;
+          };
+
+          const expandSidebar = (id) => {
+            if (attempt !== null && attempt.id === id) return;
+            cancelAttempt();
+            const token = { id, timer: 0, tries: 0 };
+            attempt = token;
+            const finish = (remember) => {
+              if (remember) handled.add(id);
+              if (attempt === token) attempt = null;
+            };
+            const schedule = (delay) => {
+              token.timer = setTimeout(step, delay);
+            };
+            const step = () => {
+              if (disposed || attempt !== token) return;
+              // The user moved on before the sidebar could open: leave the
+              // Session unhandled so coming back to it still opens it.
+              let onScreen;
+              try { onScreen = sidebar?.mounted?.getSnapshot?.(); } catch { onScreen = undefined; }
+              if (onScreen !== id) { finish(false); return; }
+              if (featureFlags.openSidebar !== true) { finish(false); return; }
+              let expanded = false;
+              try { expanded = sidebar.isExpanded() === true; } catch { expanded = false; }
+              if (expanded) { finish(true); return; }
+              const target = focusTarget(document.activeElement);
+              try {
+                sidebar.toggleExpanded();
+                finish(true);
+                restoreFocus(target);
+                return;
+              } catch (error) {
+                if (!/no session surface is mounted/.test(String(error?.message ?? error))) {
+                  finish(true); // not the adoption race: do not loop on it
+                  return;
+                }
+              }
+              token.tries += 1;
+              if (token.tries >= RETRY_LIMIT) { finish(true); return; }
+              schedule(RETRY_DELAY_MS);
+            };
+            // Always from a task of our own: the selection re-render that
+            // adopts the store has committed by then, and the controller's
+            // flushSync never runs inside the app's own store listeners.
+            schedule(0);
+          };
+
+          const maybeOpen = () => {
+            if (disposed || featureFlags.openSidebar !== true) return;
+            if (typeof sidebar?.mounted?.getSnapshot !== 'function'
+              || typeof sidebar.toggleExpanded !== 'function') return;
+            const id = sidebar.mounted.getSnapshot();
+            if (id === null || id === undefined || handled.has(id)) return;
+            if (!isNewSession(id)) return;
+            expandSidebar(id);
+          };
+
+          const onList = () => {
+            if (disposed) return;
+            // 'ready' = the first successful pull; before that the list may
+            // still be filling up and must not become the baseline.
+            if (!bootCaptured && listSnapshot()?.phase === 'ready') captureBootIds();
+            // A Session listed after it came on screen (list and selection
+            // race each other) is only classifiable now.
+            maybeOpen();
+          };
+
+          const onMounted = (id) => {
+            if (disposed || id === lastMounted) return;
+            lastMounted = id;
+            // DSH selecting its boot Session: the saved layout is the user's
+            // own last state — unless it is a New Session nobody typed in.
+            if (bootPending && id !== undefined) {
+              bootPending = false;
+              if (rowOf(id)?.blank !== true) { bootExempt = id; return; }
+            }
+            if (bootExempt !== null && bootExempt !== id) bootExempt = null;
+            maybeOpen();
+          };
+
+          let fiber = null;
+          try {
+            fiber = ctx.inject(['sidebarRight', 'sessions'], (scope) => {
+              if (disposed) return;
+              sidebar = scope?.sidebarRight ?? null;
+              sessions = scope?.sessions ?? null;
+              if (typeof sidebar?.mounted?.getSnapshot === 'function') {
+                lastMounted = sidebar.mounted.getSnapshot();
+                bootPending = lastMounted === undefined;
+                bootExempt = lastMounted ?? null;
+                try {
+                  if (typeof sidebar.mounted.subscribe === 'function') {
+                    const off = sidebar.mounted.subscribe(onMounted);
+                    unwire.push(typeof off === 'function' ? off : () => {});
+                  }
+                } catch { /* no subscription → only the list path fires */ }
+              }
+              try {
+                if (typeof sessions?.list?.subscribe === 'function') {
+                  const off = sessions.list.subscribe(onList);
+                  unwire.push(typeof off === 'function' ? off : () => {});
+                }
+              } catch { /* no list → mounted-only detection */ }
+              onList();
+            });
+          } catch { /* client runtime without callback inject */ }
+          if (fiber !== null && typeof fiber.dispose === 'function') {
+            disposers.push(() => { try { fiber.dispose(); } catch { /* already disposed */ } });
+          }
+          // Builds that never report 'ready': whatever is listed by now
+          // predates anything the user does next.
+          bootTimer = setTimeout(() => {
+            bootTimer = null;
+            if (!disposed && !bootCaptured) captureBootIds();
+          }, BOOT_BASELINE_FALLBACK_MS);
+
+          return () => {
+            disposed = true;
+            cancelAttempt();
+            if (bootTimer !== null && bootTimer !== 0) { try { clearTimeout(bootTimer); } catch { /* gone */ } }
+            bootTimer = null;
+            for (const off of unwire.splice(0)) { try { off(); } catch { /* already gone */ } }
+            for (const dispose of disposers.splice(0)) { try { dispose(); } catch { /* already gone */ } }
+          };
+        };
+
         // ---- today's usage chip (slot sidebar.footer.action) ----
         //
         // The sidebar footer renders list occupants side-by-side above the
@@ -2075,7 +2858,9 @@ window.__ModuleLoader__.load({
         // sidebar shows icon+label+compact value; the 56px rail shows an
         // icon-only square. Click opens the detail popover.
         const registerUsageWidget = () => {
-          if (React === null || typeof ctx?.slots?.register !== 'function') {
+          beacon('usage-reg-entry', { hasReact: React !== null, canRegister: typeof ctx?.slots?.register === 'function', canInject: typeof ctx?.slots?.inject === 'function' });
+          if (React === null || typeof ctx?.slots?.register !== 'function'
+            || typeof ctx.slots.inject !== 'function') {
             return () => {};
           }
           ensureUsageStyles();
@@ -2101,6 +2886,7 @@ window.__ModuleLoader__.load({
             // SWR: load on mount, refresh when the tab becomes visible, poll
             // every 5 minutes while the chip lives.
             React.useEffect(() => {
+              beacon('usage-mount', { wide });
               usageStore.ensure();
               const onVisible = () => { if (document.visibilityState === 'visible') usageStore.ensure(); };
               document.addEventListener('visibilitychange', onVisible);
@@ -2174,15 +2960,30 @@ window.__ModuleLoader__.load({
             );
           };
 
-          const unregister = ctx.slots.register(
-            { name: 'sidebar.footer.action', id: 'dsh-tools-usage', order: 5, label: () => t('usageTitle') },
-            (props) => React.createElement(UsageRow, props),
-          );
-          return () => {
-            try { unregister(); } catch { /* already gone */ }
-            usagePopover.close();
-            usageCall = null;
-          };
+          // COLD-BOOT FIX (2026-11-23 "重启后不展示了"): registering directly
+          // into 'sidebar.footer.action' throws on a fresh boot because the
+          // sidebar shell (which declares the slot) has not loaded yet:
+          //   slot "sidebar.footer.action" is not declared
+          // ctx.slots.inject() waits for the declaration and re-runs the setup
+          // when the slot (re)appears — the same pattern as the phrase bar,
+          // composer buttons and settings panel, which all survive reboots.
+          const effectBody = () => ctx.slots.inject('sidebar.footer.action', () => {
+            const unregister = ctx.slots.register(
+              { name: 'sidebar.footer.action', id: 'dsh-tools-usage', order: 5, label: () => t('usageTitle') },
+              (props) => { beacon('usage-shell-render'); return React.createElement(UsageRow, props); },
+            );
+            beacon('usage-reg-ok');
+            return () => {
+              try { unregister(); } catch { /* already gone */ }
+              usagePopover.close();
+              // NOTE: deliberately NOT nulling `usageCall` here — see the binding
+              // note at apply() entry (HMR dispose order races the new register).
+            };
+          });
+          if (typeof ctx.effect === 'function') {
+            return ctx.effect(effectBody, 'dsh-tools: usage widget');
+          }
+          return effectBody();
         };
 
         // ---- state ----
@@ -2457,6 +3258,7 @@ window.__ModuleLoader__.load({
               if (settings.model) Object.assign(modelOverride, settings.model);
               if (Array.isArray(settings.phrases)) phraseStore.set(settings.phrases);
               runtime.applyFlags?.();
+              beacon('client-flags', { usage: featureFlags.usage === true });
             }
           } catch { /* defaults stay in effect */ }
         })();
@@ -2489,10 +3291,18 @@ window.__ModuleLoader__.load({
           console.warn('[dsh-tools] source control unavailable:', error);
         }
 
+        // Right sidebar expanded by default on a new Session.
+        try {
+          keep(registerSidebarAutoOpen());
+        } catch (error) {
+          console.warn('[dsh-tools] sidebar auto-open unavailable:', error);
+        }
+
         // Today's token usage chip in the sidebar footer.
         try {
           keep(registerUsageWidget());
         } catch (error) {
+          beacon('usage-reg-throw', { message: String(error?.message ?? error) });
           console.warn('[dsh-tools] usage widget unavailable:', error);
         }
 

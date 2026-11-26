@@ -1,127 +1,194 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>dsh-tools 今日 Token 用量 — 静态预览</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-tools 今日 Token 用量 — 预览</title>
 <style>
-  /* DSH dark-theme token stand-ins (static preview only; the app supplies real ones) */
-  :root{
-    --dsw-alias-bg-layer-1:#171718;--dsw-alias-bg-layer-2:#1f1f21;--dsw-alias-bg-overlay:#242428;
-    --dsw-alias-border-l1:rgba(255,255,255,.08);--dsw-alias-border-l2:rgba(255,255,255,.14);
-    --dsw-alias-label-primary:#f2f2f2;--dsw-alias-label-secondary:#a8a8ad;--dsw-alias-label-tertiary:#78787f;
-    --dsw-alias-interactive-bg-hover:rgba(255,255,255,.09);
-    --dsw-alias-brand-primary:#3b82f6;--dsw-alias-state-warn-primary:#d29922;
-    --dsh-alias-font-mono:ui-monospace,SFMono-Regular,Consolas,monospace;
-  }
-  html,body{margin:0;background:#0e0e0f;color:var(--dsw-alias-label-primary);font:14px/1.45 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
-  .stage{display:flex;gap:40px;align-items:flex-start;padding:36px;min-height:600px;background:
-    radial-gradient(1200px 500px at 30% -10%,rgba(59,130,246,.07),transparent 60%),#0e0e0f;}
-  .note{position:fixed;top:10px;right:14px;color:var(--dsw-alias-label-tertiary);font-size:12px;}
-  /* sidebar shell mock */
-  .sidebar{width:232px;flex:none;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);
-    border:1px solid var(--dsw-alias-border-l1);border-radius:12px;height:560px;}
-  .sidebarTop{flex:1;padding:10px 8px;color:var(--dsw-alias-label-tertiary);font-size:12px;}
-  .rail{width:56px;flex:none;display:flex;flex-direction:column;align-items:center;background:var(--dsw-alias-bg-layer-1);
-    border:1px solid var(--dsw-alias-border-l1);border-radius:12px;height:560px;}
-  .footArea{display:flex;flex-direction:column;flex:none;padding:6px 8px 10px;}
-  .footerActions{display:flex;width:100%;}
-  .settingsArea{display:flex;align-items:center;gap:8px;padding:6px 6px;border-radius:8px;color:var(--dsw-alias-label-secondary);font-size:12.5px;}
-  .avatar{width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#8b5cf6);flex:none;}
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root { --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  body { background:#0b0b0c; min-height:100vh; display:flex; align-items:center; justify-content:center; gap:44px; padding:40px;
+         font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+  .stage { display:flex; flex-direction:column; gap:14px; align-items:center; }
+  .caption { font-size:11px; color:#78787f; letter-spacing:.08em; }
+  .theme-light { --bg-layer-1:#f7f7f8; --bg-overlay:#ffffff; --label-primary:#1f1f21; --label-secondary:#5c5c63;
+                 --label-tertiary:#8a8a90; --interactive-hover:rgba(0,0,0,.06); --brand:#3b82f6; --border:rgba(0,0,0,.10); }
+  .theme-dark  { --bg-layer-1:#171718; --bg-overlay:#242428; --label-primary:#f2f2f2; --label-secondary:#a8a8ad;
+                 --label-tertiary:#78787f; --interactive-hover:rgba(255,255,255,.09); --brand:#3b82f6; --border:rgba(255,255,255,.12); }
+  .sidebar-wrap { position:relative; }
+  .sidebar { width:232px; background:var(--bg-layer-1); border-radius:14px; padding:14px 12px; display:flex; flex-direction:column; gap:10px; min-height:420px; color:var(--label-primary); }
+  .fake-row { height:30px; border-radius:8px; background:color-mix(in srgb,var(--label-primary) 4%,transparent); }
+  .footArea { margin-top:auto; display:flex; flex-direction:column; gap:8px; }
+  .footerActions { display:flex; }
+  .settingsArea { display:flex; align-items:center; gap:8px; height:34px; border-radius:8px; padding:0 6px; background:color-mix(in srgb,var(--label-primary) 2%,transparent); }
+  .avatar { width:22px; height:22px; border-radius:50%; background:linear-gradient(135deg,#5b8def,#9b6bff); }
+  .settingsArea span { font-size:12px; color:var(--label-secondary); }
 
-  /* ==== widget CSS copied verbatim from client.js USAGE_CSS ==== */
-  .dsh-tools-usageChip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;margin:0 0 4px 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:default;white-space:nowrap;}
-  .dsh-tools-usageChip:hover,.dsh-tools-usageChip:focus-visible{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));color:var(--dsw-alias-label-primary);outline:none;}
-  .dsh-tools-usageChip:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-brand-primary,#3b82f6);}
-  .dsh-tools-usageChipIcon{display:inline-flex;flex:none;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}
-  .dsh-tools-usageChipIcon.is-error{color:var(--dsw-alias-state-warn-primary,#d29922);}
-  .dsh-tools-usageChipLabel{flex:none;color:inherit;}
-  .dsh-tools-usageChipValue{font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:11.5px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;}
-  .dsh-tools-usageChipValue.is-empty{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}
-  .dsh-tools-usageChipValue.is-error{color:var(--dsw-alias-state-warn-primary,#d29922);}
-  .dsh-tools-usageChip.is-rail{width:32px;height:32px;justify-content:center;padding:0;margin:0 0 4px;}
-  .dsh-tools-usagePop{position:absolute;z-index:2000;width:272px;padding:14px 14px 10px;border-radius:12px;background:var(--dsw-alias-bg-overlay,#222);border:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.22));box-shadow:0 12px 32px rgba(0,0,0,.28);font:inherit;font-size:12.5px;color:var(--dsw-alias-label-primary);}
-  .dsh-tools-usagePop *{box-sizing:border-box;}
-  .dsh-tools-usageHead{display:flex;align-items:baseline;gap:8px;}
-  .dsh-tools-usageHeadTitle{flex:1;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary);}
-  .dsh-tools-usageTotal{font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;}
-  .dsh-tools-usageBuckets{display:flex;flex-direction:column;gap:7px;margin:12px 0 2px;}
-  .dsh-tools-usageBucketRow{display:flex;align-items:center;gap:8px;height:16px;}
-  .dsh-tools-usageBucketName{width:52px;flex:none;color:var(--dsw-alias-label-secondary);font-size:11.5px;}
-  .dsh-tools-usageBucketValue{width:64px;flex:none;text-align:right;font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:11.5px;font-variant-numeric:tabular-nums;}
-  .dsh-tools-usageBar{flex:1;height:4px;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.18));overflow:hidden;}
-  .dsh-tools-usageBarFill{height:100%;border-radius:2px;background:var(--dsw-alias-brand-primary,#3b82f6);transition:width 300ms ease-out;}
-  .dsh-tools-usageMeta{margin:10px 0 0;color:var(--dsw-alias-label-secondary);font-size:11.5px;}
-  .dsh-tools-usageChartTitle{margin:13px 0 6px;color:var(--dsw-alias-label-secondary);font-size:11.5px;}
-  .dsh-tools-usageChart{display:flex;align-items:flex-end;gap:5px;height:34px;}
-  .dsh-tools-usageCol{flex:1;display:flex;align-items:flex-end;height:100%;min-width:0;}
-  .dsh-tools-usageColBar{width:100%;min-height:2px;border-radius:2px 2px 1px 1px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.28));transition:height 300ms ease-out;}
-  .dsh-tools-usageCol.is-today .dsh-tools-usageColBar{background:var(--dsw-alias-brand-primary,#3b82f6);}
-  .dsh-tools-usageFoot{display:flex;align-items:center;gap:6px;margin-top:10px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.18));color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-size:11px;}
-  .dsh-tools-usageStamp{flex:1;min-width:0;}
-  .dsh-tools-usageRefresh{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:default;flex:none;}
-  .dsh-tools-usageRefresh:hover:not(:disabled),.dsh-tools-usageRefresh:focus-visible:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.16));color:var(--dsw-alias-label-primary);outline:none;}
-  .dsh-tools-usageRefresh:disabled{opacity:.5;}
+  /* popover — mirrors client.js USAGE_CSS (theme-adaptive vars) */
+  .dsh-tools-usagePop { --u-line:var(--border); --u-fill:rgba(128,128,128,.07); --u-fill:color-mix(in srgb,var(--label-primary) 7%,transparent);
+    --u-bar:rgba(128,128,128,.32); --u-bar:color-mix(in srgb,var(--label-primary) 26%,transparent);
+    --u-in:#0284c7; --u-out:#d97706; --u-cr:var(--brand); --u-cw:#7c3aed;
+    position:absolute; left:246px; bottom:64px; width:280px; padding:16px 16px 12px; border-radius:14px;
+    background:var(--bg-overlay); border:1px solid var(--u-line); box-shadow:0 12px 32px rgba(15,17,23,.16),0 2px 6px rgba(15,17,23,.08);
+    color:var(--label-primary); font-size:12.5px; animation:pop .18s cubic-bezier(.16,1,.3,1); }
+  @keyframes pop { from { opacity:0; transform:translateY(6px) scale(.98); } to { opacity:1; transform:none; } }
+  .dsh-tools-usageEyebrow { margin-bottom:5px; font-size:10.5px; font-weight:600; letter-spacing:.06em; color:var(--label-tertiary); }
+  .dsh-tools-usageHead { display:flex; align-items:flex-end; justify-content:space-between; gap:10px; }
+  .dsh-tools-usageTotal { font-family:var(--mono); font-size:24px; line-height:1.05; font-weight:600; font-variant-numeric:tabular-nums; }
+  .dsh-tools-usageDelta { display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:999px; font-size:10.5px; font-weight:600;
+    background:rgba(128,128,128,.12); background:color-mix(in srgb,currentColor 11%,transparent); }
+  .dsh-tools-usageDelta.is-up { color:#dc2626; }
+  .dsh-tools-usageDelta.is-down { color:#16a34a; }
+  .dsh-tools-usageComp { display:flex; gap:2px; height:8px; margin:14px 0 4px; }
+  .dsh-tools-usageCompSeg { flex:none; min-width:0; border-radius:999px; }
+  .dsh-tools-usageBuckets { display:flex; flex-direction:column; gap:1px; }
+  .dsh-tools-usageBucketRow { display:flex; align-items:center; gap:8px; height:24px; padding:0 6px; margin:0 -6px; border-radius:7px; }
+  .dsh-tools-usageBucketRow:hover { background:var(--interactive-hover); }
+  .dsh-tools-usageDot { width:8px; height:8px; border-radius:3px; flex:none; }
+  .dsh-tools-usageBucketName { flex:1; color:var(--label-secondary); font-size:12px; }
+  .dsh-tools-usageBucketValue { flex:none; font-family:var(--mono); font-size:12px; font-variant-numeric:tabular-nums; }
+  .dsh-tools-usageBucketShare { width:44px; flex:none; text-align:right; color:var(--label-tertiary); font-size:11px; font-variant-numeric:tabular-nums; }
+  .dsh-tools-usageStats { display:flex; gap:8px; margin-top:12px; }
+  .dsh-tools-usageStat { flex:1; padding:8px 10px; border-radius:10px; background:var(--u-fill); }
+  .dsh-tools-usageStatValue { font-family:var(--mono); font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .dsh-tools-usageStatLabel { margin-top:1px; font-size:10.5px; color:var(--label-tertiary); }
+  .dsh-tools-usageChartTitle { margin:14px 0 7px; font-size:10.5px; font-weight:600; letter-spacing:.06em; color:var(--label-tertiary); }
+  .dsh-tools-usageChartRow { position:relative; display:flex; align-items:flex-end; gap:6px; height:44px; padding-bottom:5px; border-bottom:1px solid var(--u-line); }
+  .dsh-tools-usageCol { flex:1; display:flex; align-items:flex-end; justify-content:center; height:100%; }
+  .dsh-tools-usageColBar { width:100%; max-width:18px; min-height:3px; border-radius:4px 4px 2px 2px; background:var(--u-bar); }
+  .dsh-tools-usageCol.is-today .dsh-tools-usageColBar { background:var(--brand); box-shadow:0 0 10px rgba(59,130,246,.35); }
+  .dsh-tools-usageChartTags { display:flex; gap:6px; margin-top:4px; }
+  .dsh-tools-usageColTag { flex:1; text-align:center; font-size:9.5px; line-height:1; color:var(--label-tertiary); }
+  .dsh-tools-usageColTag.is-today { color:var(--label-secondary); font-weight:600; }
+  .dsh-tools-usageFoot { display:flex; align-items:center; gap:6px; margin-top:12px; padding-top:9px; border-top:1px solid var(--u-line); color:var(--label-tertiary); font-size:11px; }
+  .dsh-tools-usageStamp { flex:1; font-family:var(--mono); }
+  .dsh-tools-usageRefresh { all:unset; display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:6px; color:var(--label-secondary); }
+  .dsh-tools-usageRefresh:hover { background:var(--interactive-hover); color:var(--label-primary); }
+
+  .sidebar button.chip { all:unset; display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 9px; margin:0 0 4px 8px;
+    border-radius:8px; color:var(--label-secondary); font-size:12px; }
+  .sidebar button.chip:hover { background:var(--interactive-hover); color:var(--label-primary); }
+  .chip svg { color:var(--label-tertiary); }
+  .chip .v { font-family:var(--mono); font-size:11.5px; color:var(--label-primary); }
 </style>
 </head>
 <body>
-<div class="note">静态预览 · 数据为 2026-11-23 17:46 真实 usage.today 快照</div>
-<div class="stage">
-
-  <!-- expanded sidebar -->
-  <div class="sidebar" style="position:relative;">
-    <div class="sidebarTop">工作区列表…</div>
-    <div class="footArea">
-      <div class="footerActions">
-        <button type="button" class="dsh-tools-usageChip" aria-haspopup="dialog" aria-expanded="false" title="今日 Token 用量 · 请求 2470">
-          <span class="dsh-tools-usageChipIcon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/></svg></span>
-          <span class="dsh-tools-usageChipLabel">今日</span>
-          <span class="dsh-tools-usageChipValue">332M</span>
-        </button>
+  <div class="stage">
+    <div class="sidebar-wrap theme-light">
+      <div class="sidebar">
+        <div class="fake-row" style="width:56%"></div>
+        <div class="fake-row" style="width:72%"></div>
+        <div class="fake-row" style="width:48%"></div>
+        <div class="footArea">
+          <div class="footerActions">
+            <button class="chip" title="今日 Token 用量">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+              <span>今日</span><span class="v">227M</span>
+            </button>
+          </div>
+          <div class="settingsArea"><div class="avatar"></div><span>马晓辉</span></div>
+        </div>
       </div>
-      <div class="settingsArea"><span class="avatar"></span>马晓辉</div>
+      <div class="dsh-tools-usagePop" role="dialog">
+        <div class="dsh-tools-usageEyebrow">今日 Token 用量</div>
+        <div class="dsh-tools-usageHead"><div class="dsh-tools-usageTotal">227M</div><div class="dsh-tools-usageDelta is-up">↑128%</div></div>
+        <div class="dsh-tools-usageComp">
+          <div class="dsh-tools-usageCompSeg" style="background:var(--u-in);width:3%"></div>
+          <div class="dsh-tools-usageCompSeg" style="background:var(--u-out);width:1%"></div>
+          <div class="dsh-tools-usageCompSeg" style="background:var(--u-cr);width:95%"></div>
+          <div class="dsh-tools-usageCompSeg" style="background:var(--u-cw);width:1%"></div>
+        </div>
+        <div class="dsh-tools-usageBuckets">
+          <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageDot" style="background:var(--u-in)"></div><div class="dsh-tools-usageBucketName">输入</div><div class="dsh-tools-usageBucketValue">5.32M</div><div class="dsh-tools-usageBucketShare">2%</div></div>
+          <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageDot" style="background:var(--u-out)"></div><div class="dsh-tools-usageBucketName">输出</div><div class="dsh-tools-usageBucketValue">586K</div><div class="dsh-tools-usageBucketShare">1%</div></div>
+          <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageDot" style="background:var(--u-cr)"></div><div class="dsh-tools-usageBucketName">缓存读</div><div class="dsh-tools-usageBucketValue">221M</div><div class="dsh-tools-usageBucketShare">97%</div></div>
+          <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageDot" style="background:var(--u-cw)"></div><div class="dsh-tools-usageBucketName">缓存写</div><div class="dsh-tools-usageBucketValue">0</div><div class="dsh-tools-usageBucketShare">0%</div></div>
+        </div>
+        <div class="dsh-tools-usageStats">
+          <div class="dsh-tools-usageStat"><div class="dsh-tools-usageStatValue">1,507</div><div class="dsh-tools-usageStatLabel">请求</div></div>
+          <div class="dsh-tools-usageStat"><div class="dsh-tools-usageStatValue">22</div><div class="dsh-tools-usageStatLabel">活跃会话</div></div>
+        </div>
+        <div class="dsh-tools-usageChartTitle">近 7 天</div>
+        <div class="dsh-tools-usageChart">
+          <div class="dsh-tools-usageChartRow">
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:18px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:26px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:12px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:22px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:9px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:30px"></div></div>
+            <div class="dsh-tools-usageCol is-today"><div class="dsh-tools-usageColBar" style="height:38px"></div></div>
+          </div>
+          <div class="dsh-tools-usageChartTags">
+            <div class="dsh-tools-usageColTag">二</div><div class="dsh-tools-usageColTag">三</div><div class="dsh-tools-usageColTag">四</div><div class="dsh-tools-usageColTag">五</div><div class="dsh-tools-usageColTag">六</div><div class="dsh-tools-usageColTag">日</div><div class="dsh-tools-usageColTag is-today">今</div>
+          </div>
+        </div>
+        <div class="dsh-tools-usageFoot">
+          <div class="dsh-tools-usageStamp">更新于 19:35:11</div>
+          <button class="dsh-tools-usageRefresh" title="刷新"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
+        </div>
+      </div>
     </div>
-
-    <!-- popover (open state) -->
-    <div class="dsh-tools-usagePop" role="dialog" aria-label="今日 Token 用量" style="left:120px;bottom:64px;">
-      <div class="dsh-tools-usageHead">
-        <div class="dsh-tools-usageHeadTitle">今日 Token 用量</div>
-        <div class="dsh-tools-usageTotal" title="332228035">332M</div>
-      </div>
-      <div class="dsh-tools-usageBuckets">
-        <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageBucketName">输入</div><div class="dsh-tools-usageBucketValue">9.62M</div><div class="dsh-tools-usageBar"><div class="dsh-tools-usageBarFill" style="width:3%;opacity:.95"></div></div></div>
-        <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageBucketName">输出</div><div class="dsh-tools-usageBucketValue">1.19M</div><div class="dsh-tools-usageBar"><div class="dsh-tools-usageBarFill" style="width:0.4%;opacity:.72"></div></div></div>
-        <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageBucketName">缓存读</div><div class="dsh-tools-usageBucketValue">321M</div><div class="dsh-tools-usageBar"><div class="dsh-tools-usageBarFill" style="width:100%;opacity:.5"></div></div></div>
-        <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageBucketName">缓存写</div><div class="dsh-tools-usageBucketValue">0</div><div class="dsh-tools-usageBar"><div class="dsh-tools-usageBarFill" style="width:0%;opacity:.32"></div></div></div>
-      </div>
-      <div class="dsh-tools-usageMeta">请求 2470 · 活跃会话 31</div>
-      <div class="dsh-tools-usageChartTitle">近 7 天</div>
-      <div class="dsh-tools-usageChart">
-        <div class="dsh-tools-usageCol" title="2026-11-17 · 198M"><div class="dsh-tools-usageColBar" style="height:20px"></div></div>
-        <div class="dsh-tools-usageCol" title="2026-11-18 · 225M"><div class="dsh-tools-usageColBar" style="height:23px"></div></div>
-        <div class="dsh-tools-usageCol" title="2026-11-19 · 137M"><div class="dsh-tools-usageColBar" style="height:14px"></div></div>
-        <div class="dsh-tools-usageCol" title="2026-11-20 · 157M"><div class="dsh-tools-usageColBar" style="height:16px"></div></div>
-        <div class="dsh-tools-usageCol" title="2026-11-21 · 54.9M"><div class="dsh-tools-usageColBar" style="height:6px"></div></div>
-        <div class="dsh-tools-usageCol" title="2026-11-22 · 99.9M"><div class="dsh-tools-usageColBar" style="height:10px"></div></div>
-        <div class="dsh-tools-usageCol is-today" title="2026-11-23 · 332M"><div class="dsh-tools-usageColBar" style="height:34px"></div></div>
-      </div>
-      <div class="dsh-tools-usageFoot">
-        <div class="dsh-tools-usageStamp">更新于 17:46:05</div>
-        <button type="button" class="dsh-tools-usageRefresh" title="刷新" aria-label="刷新"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
-      </div>
-    </div>
+    <div class="caption">浅色主题（当前应用）</div>
   </div>
 
-  <!-- collapsed rail -->
-  <div class="rail">
-    <div style="flex:1"></div>
-    <div class="footerActions" style="justify-content:center">
-      <button type="button" class="dsh-tools-usageChip is-rail" aria-haspopup="dialog" aria-expanded="false" title="今日 Token 用量 · 请求 2470">
-        <span class="dsh-tools-usageChipIcon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12z"/></svg></span>
-      </button>
+  <div class="stage">
+    <div class="sidebar-wrap theme-dark">
+      <div class="sidebar">
+        <div class="fake-row" style="width:56%"></div>
+        <div class="fake-row" style="width:72%"></div>
+        <div class="fake-row" style="width:48%"></div>
+        <div class="footArea">
+          <div class="footerActions">
+            <button class="chip" title="今日 Token 用量">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+              <span>今日</span><span class="v">227M</span>
+            </button>
+          </div>
+          <div class="settingsArea"><div class="avatar"></div><span>马晓辉</span></div>
+        </div>
+      </div>
+      <div class="dsh-tools-usagePop" role="dialog">
+        <div class="dsh-tools-usageEyebrow">今日 Token 用量</div>
+        <div class="dsh-tools-usageHead"><div class="dsh-tools-usageTotal">227M</div><div class="dsh-tools-usageDelta is-up">↑128%</div></div>
+        <div class="dsh-tools-usageComp">
+          <div class="dsh-tools-usageCompSeg" style="background:var(--u-in);width:3%"></div>
+          <div class="dsh-tools-usageCompSeg" style="background:var(--u-out);width:1%"></div>
+          <div class="dsh-tools-usageCompSeg" style="background:var(--u-cr);width:95%"></div>
+          <div class="dsh-tools-usageCompSeg" style="background:var(--u-cw);width:1%"></div>
+        </div>
+        <div class="dsh-tools-usageBuckets">
+          <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageDot" style="background:var(--u-in)"></div><div class="dsh-tools-usageBucketName">输入</div><div class="dsh-tools-usageBucketValue">5.32M</div><div class="dsh-tools-usageBucketShare">2%</div></div>
+          <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageDot" style="background:var(--u-out)"></div><div class="dsh-tools-usageBucketName">输出</div><div class="dsh-tools-usageBucketValue">586K</div><div class="dsh-tools-usageBucketShare">1%</div></div>
+          <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageDot" style="background:var(--u-cr)"></div><div class="dsh-tools-usageBucketName">缓存读</div><div class="dsh-tools-usageBucketValue">221M</div><div class="dsh-tools-usageBucketShare">97%</div></div>
+          <div class="dsh-tools-usageBucketRow"><div class="dsh-tools-usageDot" style="background:var(--u-cw)"></div><div class="dsh-tools-usageBucketName">缓存写</div><div class="dsh-tools-usageBucketValue">0</div><div class="dsh-tools-usageBucketShare">0%</div></div>
+        </div>
+        <div class="dsh-tools-usageStats">
+          <div class="dsh-tools-usageStat"><div class="dsh-tools-usageStatValue">1,507</div><div class="dsh-tools-usageStatLabel">请求</div></div>
+          <div class="dsh-tools-usageStat"><div class="dsh-tools-usageStatValue">22</div><div class="dsh-tools-usageStatLabel">活跃会话</div></div>
+        </div>
+        <div class="dsh-tools-usageChartTitle">近 7 天</div>
+        <div class="dsh-tools-usageChart">
+          <div class="dsh-tools-usageChartRow">
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:18px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:26px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:12px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:22px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:9px"></div></div>
+            <div class="dsh-tools-usageCol"><div class="dsh-tools-usageColBar" style="height:30px"></div></div>
+            <div class="dsh-tools-usageCol is-today"><div class="dsh-tools-usageColBar" style="height:38px"></div></div>
+          </div>
+          <div class="dsh-tools-usageChartTags">
+            <div class="dsh-tools-usageColTag">二</div><div class="dsh-tools-usageColTag">三</div><div class="dsh-tools-usageColTag">四</div><div class="dsh-tools-usageColTag">五</div><div class="dsh-tools-usageColTag">六</div><div class="dsh-tools-usageColTag">日</div><div class="dsh-tools-usageColTag is-today">今</div>
+          </div>
+        </div>
+        <div class="dsh-tools-usageFoot">
+          <div class="dsh-tools-usageStamp">更新于 19:35:11</div>
+          <button class="dsh-tools-usageRefresh" title="刷新"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
+        </div>
+      </div>
     </div>
-    <div class="settingsArea" style="justify-content:center;padding:6px 0;"><span class="avatar"></span></div>
+    <div class="caption">深色主题</div>
   </div>
-
-</div>
 </body>
 </html>

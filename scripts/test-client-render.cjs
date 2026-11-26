@@ -233,10 +233,12 @@ const stubs = {
     { path: 'src/mod.js', status: 'M', staged: false, orig: null },
     { path: 'src/gone.js', status: 'D', staged: true, orig: null },
   ], truncated: false } }),
-  'sc.diff': () => ({ ok: true, value: { diff: '+hello\n-world\n@@ -1 +1 @@\n ctx' } }),
+  'sc.diff': () => ({ ok: true, value: { diff: 'diff --git a/f.txt b/f.txt\nindex 111..222 100644\n--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n-hello\n+world\n ctx' } }),
   'sc.commitMessage': () => ({ ok: true, value: { draft: 'feat: add things', lang: 'zh' } }),
   'sc.commit': () => ({ ok: true, value: { commit: 'abc1234', count: 1 } }),
   'sc.push': () => ({ ok: true, value: { output: 'pushed' } }),
+  'sc.pull': () => ({ ok: true, value: { repo: 'C:/t/repo-a', output: 'Already up to date.' } }),
+  'sc.prisma': () => ({ ok: true, value: { repo: 'C:/t/repo-a', ran: ['prisma:generate', 'prisma:push'], output: 'done' } }),
   'usage.today': () => ({ ok: true, value: {
     timeZone: 'Asia/Shanghai',
     today: { day: '2026-11-23', isToday: true, inputTokens: 180_000, outputTokens: 42_000, cacheReadTokens: 980_000, cacheWriteTokens: 32_500, requests: 17, total: 1_234_500 },
@@ -363,7 +365,36 @@ const runEffects = async () => {
   await settle();
   await step();
   const diff = findAll(tree, byClass('dsh-tools-scDiff'))[0];
-  check('diff rendered', diff !== undefined && diff.children.some((line) => line.children[0] === '+hello'));
+  check('diff rendered', diff !== undefined && diff.children.some((line) => line.children[0] === '+world'));
+  check('unified view filters git preamble (v0.7.10)',
+    diff !== undefined && diff.children.every((line) => line.children[0] !== 'diff --git a/f.txt b/f.txt'
+      && line.children[0] !== '--- a/f.txt' && line.children[0] !== '+++ b/f.txt'));
+
+  // 2b) diff layout toggle (v0.7.9): unified default → split → back.
+  const styleBtn = () => findAll(tree, byClass('dsh-tools-scMini'))
+    .find((b) => b.children.some((c) => c.children?.[0] === '纵向' || c.children?.[0] === '横向'));
+  check('diff style toggle present (unified)', styleBtn() !== undefined
+    && styleBtn().props['aria-pressed'] === 'false');
+  check('split view absent before toggle', findAll(tree, byClass('dsh-tools-scDiffSplit')).length === 0);
+  styleBtn().props.onClick();
+  await settle(); await step();
+  const split = findAll(tree, byClass('dsh-tools-scDiffSplit'))[0];
+  check('split view rendered', split !== undefined);
+  check('split view filters git preamble (v0.7.10)',
+    split !== undefined && split.children.every((cell) => cell.children?.[0] !== 'diff --git a/f.txt b/f.txt'
+      && cell.children?.[0] !== '--- a/f.txt'));
+  check('split hunk header kept', findAll(tree, byClass('dsh-tools-dh'))[0]?.children[0] === '@@ -1,2 +1,2 @@');
+  const splitCells = findAll(tree, byClass('dsh-tools-dc'));
+  const delCell = splitCells.find((c) => String(c.props.className).includes('is-del'));
+  const addCell = splitCells.find((c) => String(c.props.className).includes('is-add'));
+  check('split pairs del/add rows', delCell?.children[0] === 'hello' && addCell?.children[0] === 'world');
+  const nos = findAll(tree, byClass('dsh-tools-dno')).map((n) => n.children[0]).join(',');
+  check('split line numbers follow hunk header', nos === '1,1,2,2', `nos=${nos}`);
+  check('toggle pressed in split mode', styleBtn()?.props['aria-pressed'] === 'true');
+  styleBtn().props.onClick();
+  await settle(); await step();
+  check('back to unified', findAll(tree, byClass('dsh-tools-scDiffSplit')).length === 0
+    && findAll(tree, byClass('dsh-tools-scDiff')).length === 1);
 
   // 3) partial selection → commit bar
   const boxes = findAll(tree, (n) => n.type === 'input' && n.props.type === 'checkbox');
@@ -403,6 +434,37 @@ const runEffects = async () => {
   pushBtn.props.onClick();
   await settle(); await settle();
   check('push called', calls.some((c) => c.method === 'sc.push'));
+
+  // 6b) v0.7.5 per-group update buttons: 更新代码 / 更新数据库 icons
+  const pullBtn = findAll(tree, byClass('dsh-tools-scIconBtn'))
+    .find((b) => b.props.title === '更新代码：git pull --rebase --autostash');
+  check('group update-code button present', pullBtn !== undefined);
+  pullBtn.props.onClick();
+  await settle(); await settle();
+  await step();
+  check('sc.pull called with repo path', calls.some((c) => c.method === 'sc.pull' && c.payload?.repo === 'C:/t/repo-a'));
+  check('pull success note', findAll(tree, (n) => n.children[0] === '代码已更新').length === 1);
+  const dbBtn = findAll(tree, byClass('dsh-tools-scIconBtn'))
+    .find((b) => b.props.title === '更新数据库：pnpm prisma:generate → pnpm prisma:push');
+  check('group update-database button present', dbBtn !== undefined);
+  dbBtn.props.onClick();
+  await settle(); await settle();
+  check('sc.prisma called with repo path', calls.some((c) => c.method === 'sc.prisma' && c.payload?.repo === 'C:/t/repo-a'));
+
+  // 6c) v0.7.5 top update bar: both buttons sweep every listed repository
+  const barButtons = findAll(tree, byClass('dsh-tools-scMini'));
+  const topPull = barButtons.find((b) => b.children.some((c) => c?.children?.[0] === '更新代码'));
+  const topDb = barButtons.find((b) => b.children.some((c) => c?.children?.[0] === '更新数据库'));
+  check('top update bar shows both buttons', topPull !== undefined && topDb !== undefined);
+  const pullsBefore = calls.filter((c) => c.method === 'sc.pull').length;
+  topPull.props.onClick();
+  await settle(); await settle(); await settle();
+  // Sample BEFORE runEffects(): this fake harness re-fires every effect on
+  // each step(), which re-runs loadAll() and its intentional batchNote
+  // reset — real React only re-runs that effect on a workspace switch.
+  tree = render();
+  check('batch pull swept the repo', calls.filter((c) => c.method === 'sc.pull').length === pullsBefore + 1);
+  check('batch summary note', findAll(tree, byClass('dsh-tools-scBatchNote'))[0]?.children[0] === '代码已更新 1');
 
   // 7) quick phrases: hidden overlay host injects an in-card row above the
   //    draft editor; pills build from the store and click inserts at the caret
@@ -534,10 +596,21 @@ const runEffects = async () => {
   const bucketRows = domFindAll(pop, byDomClass('dsh-tools-usageBucketRow'));
   check('popover bucket rows', bucketRows.length === 4, `rows=${bucketRows.length}`);
   const chart = popRows.find(byDomClass('dsh-tools-usageChart'));
-  check('popover chart has 7 columns', chart !== undefined && chart.children.length === 7
-    && String(chart.children[6].className).includes('is-today'));
-  check('popover meta mentions requests', popRows.some((row) => String(row._text ?? '').includes('请求')
-    || (row.children ?? []).some((c) => (c._text ?? '').includes('请求'))));
+  const chartCols = chart ? domFindAll(chart, byDomClass('dsh-tools-usageCol')) : [];
+  check('popover chart has 7 columns', chartCols.length === 7
+    && String(chartCols[6].className).includes('is-today'));
+  const chartTags = chart ? domFindAll(chart, byDomClass('dsh-tools-usageColTag')) : [];
+  check('chart tags show weekdays + 今', chartTags.length === 7 && (chartTags[6]._text ?? '') === '今'
+    && (chartTags[0]._text ?? '').length >= 1, `last=${chartTags[6]?._text}`);
+  const tipEl = chart ? domFindAll(chart, byDomClass('dsh-tools-usageTip'))[0] : undefined;
+  const tipOpen = () => String(tipEl?.className ?? '').includes('is-open');
+  (chartCols[6]?.listeners?.mouseenter ?? []).forEach((fn) => fn());
+  const tipText = tipEl ? domFindAll(tipEl, () => true).map((n) => n._text ?? '').join('|') : '';
+  check('hover opens instant tooltip with values', tipOpen() && tipText.includes('1.23M')
+    && tipText.includes('请求') && tipText.includes('今日'), `text=${tipText}`);
+  (chartCols[6]?.listeners?.mouseleave ?? []).forEach((fn) => fn());
+  check('leave closes tooltip', !tipOpen());
+  check('popover meta mentions requests', domFindAll(pop, (n) => (n._text ?? '').includes('请求')).length > 0);
   const forced = calls.filter((c) => c.method === 'usage.today' && c.payload?.force === true);
   check('opening forces a refresh', forced.length >= 1, `forced=${forced.length}`);
   chipTree = usageTree();

@@ -35,7 +35,7 @@ export const inject = ['webServer', 'connection'];
 
 // Single source of truth for the running generation; dev.ping reports it so the
 // Client can confirm a hot reload actually swapped this module.
-const MODULE_VERSION = 'v0.7.0';
+const MODULE_VERSION = 'v0.7.11';
 
 const RPC_KEY = 'dsh-tools';
 const HELPER_PATH = join(tmpdir(), 'dsh-tools-restart.ps1');
@@ -330,6 +330,10 @@ const METHODS = {
   restart: handleRestart,
   'restart.plan': async () => ({ ok: true, value: { ...desktopFacts(), scheduled: restartScheduled } }),
   'dev.ping': async () => ({ ok: true, value: { version: MODULE_VERSION, pid: process.pid } }),
+  'debug.beacon': async (payload) => {
+    debugLog(`beacon ${JSON.stringify(payload ?? {})}`);
+    return { ok: true, value: { received: true } };
+  },
   'dev.reconcile': handleDevReconcile,
   suggest: handleSuggest,
   optimize: handleOptimize,
@@ -343,6 +347,8 @@ const METHODS = {
   'sc.commitMessage': handleScCommitMessage,
   'sc.commit': handleScCommit,
   'sc.push': handleScPush,
+  'sc.pull': handleScPull,
+  'sc.prisma': handleScPrisma,
   'usage.today': handleUsageToday,
 };
 
@@ -353,7 +359,9 @@ const METHODS = {
 // DSH_TOOLS_HOME overrides the directory wholesale (used by tests).
 
 const DEFAULT_SETTINGS = Object.freeze({
-  features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true, phrases: true, usage: true },
+  // openSidebar: expand the right sidebar once when a Session the user has
+  // just created comes on screen (the app itself always starts it collapsed).
+  features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true, phrases: true, usage: true, openSidebar: true },
   model: { provider: '', model: '' },   // '' = follow the app's default model
   sc: { roots: [] },                    // extra source-control scan roots (absolute dirs)
   phrases: [],                          // quick phrases floating above the composer (max 5)
@@ -742,6 +750,11 @@ async function handleOptimize(payload) {
 //                      the pathspec commit takes only those paths' worktree
 //                      state, so unrelated staged changes stay staged
 //   sc.push          → `git push` (never force; respects the branch upstream)
+//   sc.pull          → `git pull --rebase --autostash` (v0.7.5 "更新代码")
+//   sc.prisma        → `pnpm run prisma:generate` then `pnpm run prisma:push`
+//                      over the scripts that exist in the repo's package.json
+//                      (v0.7.5 "更新数据库"); repos without either script fail
+//                      with code `no-prisma-scripts` so the client can skip
 
 let workspaceRegistryService = null;
 
@@ -755,6 +768,9 @@ const SC_DIFF_FILE_MAX = 6000;    // per-file diff fed to the commit model
 const SC_DIFF_TOTAL_MAX = 20000;  // total diff fed to the commit model
 const SC_LOG_COUNT = 30;
 const SC_MAX_SELECTED = 200;
+const SC_PULL_TIMEOUT_MS = 300000;   // git pull --rebase --autostash (fetch + rebase)
+const SC_PRISMA_TIMEOUT_MS = 600000; // prisma generate/push can run minutes in monorepos
+const SC_PRISMA_SCRIPTS = ['prisma:generate', 'prisma:push'];
 const SC_SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'target', 'venv', '.venv', '__pycache__', 'coverage', '.cache']);
 
 function runGit(repo, args, options = {}) {
@@ -938,7 +954,11 @@ export function syntheticNewFileDiff(repo, file) {
     const lines = content.split('\n');
     if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
     const body = lines.map((line) => `+${line}`).join('\n');
-    return `diff --git a/${file} b/${file}\nnew file mode 100644\n--- /dev/null\n+++ b/${file}\n${body}\n`;
+    // v0.7.10: emit the standard new-file hunk header so downstream diff
+    // views (side-by-side pairing, line numbers) behave exactly like a real
+    // `git diff` for new files — previously the synthetic body had no @@,
+    // which made pair-view clients stack every + line at the end.
+    return `diff --git a/${file} b/${file}\nnew file mode 100644\n--- /dev/null\n+++ b/${file}\n@@ -0,0 +1,${lines.length} @@\n${body}\n`;
   } catch {
     return `diff --git a/${file} b/${file}\nnew file mode 100644\n(file no longer exists)\n`;
   }
@@ -1096,6 +1116,85 @@ async function handleScPush(payload) {
   } catch (error) {
     return gitFailure(error, repo, 'git push');
   }
+}
+
+// v0.7.5 "更新代码" — one-button sync of a repository.
+async function handleScPull(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  try {
+    const result = await runGit(repo, ['pull', '--rebase', '--autostash'], { timeout: SC_PULL_TIMEOUT_MS });
+    const output = `${String(result.stdout ?? '')}\n${String(result.stderr ?? '')}`.trim();
+    debugLog(`sc.pull repo=${repo} ok`);
+    return { ok: true, value: { repo, output: output.split('\n').slice(-6).join('\n').slice(0, 1200) } };
+  } catch (error) {
+    return gitFailure(error, repo, 'git pull');
+  }
+}
+
+// v0.7.5 "更新数据库" — regenerate the Prisma client, then sync the schema.
+//
+// The script names are CONSTANTS (SC_PRISMA_SCRIPTS), never client input, so
+// routing pnpm through cmd.exe below cannot inject anything: the repo only
+// chooses WHERE its own package.json scripts run, not WHAT runs.
+function repoPackageScripts(repo) {
+  try {
+    const parsed = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8'));
+    return isRecord(parsed?.scripts) ? parsed.scripts : {};
+  } catch { return {}; }
+}
+
+/** stdout+stderr of a finished or FAILED child process (execFile rejections carry both), tail-capped. */
+function tailProcessOutput(result, lines = 10, maxChars = 1500) {
+  const text = `${String(result?.stdout ?? '')}\n${String(result?.stderr ?? '')}`.trim();
+  return text.split('\n').slice(-lines).join('\n').slice(0, maxChars);
+}
+
+/** `pnpm run <script>` in cwd=repo with a fixed literal script name. */
+function runPnpmScript(repo, script) {
+  const options = {
+    cwd: repo,
+    timeout: SC_PRISMA_TIMEOUT_MS,
+    maxBuffer: 16 * 1024 * 1024,
+    windowsHide: true,
+    encoding: 'utf8',
+  };
+  // pnpm on Windows resolves to a .cmd shim, which CreateProcess cannot
+  // execute directly (post CVE-2024-27980 Node even refuses it) — go through
+  // cmd.exe with a literal command string.
+  if (process.platform === 'win32') {
+    return execFileAsync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `pnpm run ${script}`], options);
+  }
+  return execFileAsync('pnpm', ['run', script], options);
+}
+
+async function handleScPrisma(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  const scripts = repoPackageScripts(repo);
+  const wanted = SC_PRISMA_SCRIPTS
+    .filter((script) => typeof scripts[script] === 'string' && scripts[script].trim() !== '');
+  if (wanted.length === 0) {
+    // Distinct code so the client can render "skipped" instead of an error
+    // when the top-bar button sweeps every repository in the workspace.
+    return failure('no-prisma-scripts',
+      `No ${SC_PRISMA_SCRIPTS.join(' / ')} scripts in ${repo} package.json.`, { repo });
+  }
+  const parts = [];
+  for (const script of wanted) {
+    try {
+      const result = await runPnpmScript(repo, script);
+      parts.push(`$ pnpm run ${script}\n${tailProcessOutput(result)}`);
+    } catch (error) {
+      debugLog(`sc.prisma repo=${repo} script=${script} failed: ${String(error?.message ?? error)}`);
+      return failure('pnpm-error',
+        `pnpm run ${script} failed in ${repo}: ${tailProcessOutput(error, 8, 1200) || String(error?.message ?? error)}`,
+        { repo, script });
+    }
+  }
+  debugLog(`sc.prisma repo=${repo} ran ${wanted.join(' + ')}`);
+  const output = parts.join('\n').split('\n').slice(-12).join('\n').slice(0, 1600);
+  return { ok: true, value: { repo, ran: wanted, output } };
 }
 
 // ---- usage: per-day token usage aggregation (sidebar "today" widget) ----
@@ -1328,12 +1427,70 @@ export function buildUsagePayload(states, now = Date.now()) {
 
 // Host-side caches. One rescan walks every logical session through readSession
 // (which validates + clones the full log); USAGE_FRESH_MS rate-limits it and
-// concurrent callers share the in-flight scan.
+// concurrent callers share the in-flight scan. A cold scan over ~30 sessions
+// costs tens of seconds, so the last completed payload is ALSO persisted to
+// <stateDir>/usage-cache.json: after an app restart the first caller gets the
+// previous numbers instantly (flagged stale) while a background rescan runs,
+// and readSession calls are parallelized to shrink the cold-scan window.
 const USAGE_FRESH_MS = 30_000;
+const USAGE_STALE_WAIT_MS = 1_500;   // max time to wait for an in-flight scan when stale data exists
+const USAGE_SCAN_POOL = 6;           // concurrent readSession workers
 let sessionQueryService = null;
 const usageSessions = new Map();
 let usageResultCache = null;
 let usageInflight = null;
+let usageDiskSeeded = false;
+
+function usageCacheFile() {
+  return join(settingsDirectory(), 'usage-cache.json');
+}
+
+/** Read the persisted snapshot (if any) into the in-memory cache once. */
+function seedUsageFromDisk() {
+  if (usageDiskSeeded) return;
+  usageDiskSeeded = true;
+  try {
+    const raw = readFileSync(usageCacheFile(), 'utf8');
+    const parsed = JSON.parse(raw);
+    const savedAt = typeof parsed?.savedAt === 'number' ? parsed.savedAt : 0;
+    if (savedAt > 0 && isRecord(parsed?.payload)) {
+      usageResultCache = { generatedAt: savedAt, payload: parsed.payload };
+      debugLog('usage: seeded from disk cache');
+    }
+  } catch { /* no cache yet — fine */ }
+}
+
+/** Persist the last completed payload so restarts can answer instantly. */
+function persistUsageToDisk() {
+  try {
+    const dir = settingsDirectory();
+    mkdirSync(dir, { recursive: true });
+    const target = usageCacheFile();
+    const tmp = `${target}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ savedAt: usageResultCache.generatedAt, payload: usageResultCache.payload }));
+    renameSync(tmp, target);
+  } catch (error) {
+    debugLog(`usage: cache persist failed: ${String(error?.message ?? error)}`);
+  }
+}
+
+/** Wait for `promise` but no longer than `ms`; resolves null on timeout. */
+function withTimeout(promise, ms) {
+  return new Promise((resolvePromise) => {
+    const timer = setTimeout(() => resolvePromise(null), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolvePromise(value); },
+      () => { clearTimeout(timer); resolvePromise(null); },
+    );
+  });
+}
+
+/** Wrap the cached payload with an honest staleness flag for the client. */
+function usageCacheResult() {
+  if (usageResultCache === null) return null;
+  const stale = Date.now() - usageResultCache.generatedAt > USAGE_FRESH_MS;
+  return { ok: true, value: { ...usageResultCache.payload, stale } };
+}
 
 async function scanUsage(log) {
   const service = sessionQueryService;
@@ -1344,47 +1501,61 @@ async function scanUsage(log) {
   const todayKey = usageDayKey(Date.now(), timeZone);
   const records = await service.listSessions();
   const live = new Set();
+  const ids = [];
   for (const record of Array.isArray(records) ? records : []) {
     const id = record?.header?.id;
     if (id === undefined) continue;
     live.add(id);
-    try {
-      const snapshot = await service.readSession(id);
-      const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
-      const state = usageSessions.get(id) ?? createUsageState();
-      foldUsageEvents(state, events, todayKey, timeZone);
-      usageSessions.set(id, state);
-    } catch (error) {
-      debugLog(`usage: session ${String(id)} skipped: ${String(error?.message ?? error)}`);
-    }
+    ids.push(id);
   }
+  // Parallel workers: per-session fold states are independent, and readSession
+  // (validate + clone of the full log) dominates the cold-scan cost.
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < ids.length) {
+      const id = ids[cursor++];
+      try {
+        const snapshot = await service.readSession(id);
+        const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+        const state = usageSessions.get(id) ?? createUsageState();
+        foldUsageEvents(state, events, todayKey, timeZone);
+        usageSessions.set(id, state);
+      } catch (error) {
+        debugLog(`usage: session ${String(id)} skipped: ${String(error?.message ?? error)}`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(USAGE_SCAN_POOL, ids.length)) }, worker));
   for (const id of usageSessions.keys()) {
     if (!live.has(id)) usageSessions.delete(id);
   }
   const payload = buildUsagePayload(usageSessions);
   usageResultCache = { generatedAt: Date.now(), payload };
-  return { ok: true, value: payload };
+  persistUsageToDisk();
+  return { ok: true, value: { ...payload, stale: false } };
 }
 
 async function handleUsageToday(payload) {
   const force = isRecord(payload) && payload.force === true;
+  seedUsageFromDisk();
   const now = Date.now();
   if (!force && usageResultCache !== null && now - usageResultCache.generatedAt < USAGE_FRESH_MS) {
-    return { ok: true, value: usageResultCache.payload };
+    return usageCacheResult();
   }
-  if (usageInflight !== null) {
-    await usageInflight.catch(() => {});
-    if (usageResultCache !== null && Date.now() - usageResultCache.generatedAt < USAGE_FRESH_MS) {
-      return { ok: true, value: usageResultCache.payload };
-    }
+  const hadCache = usageResultCache !== null;
+  if (usageInflight === null) {
+    usageInflight = scanUsage(console);
+    const settle = () => { usageInflight = null; };
+    usageInflight.then(settle, settle);
   }
-  const log = (message, level = 'info') => {
-    const target = console;
-    try { (target[level] ?? target.log).call(target, message); } catch { /* silent */ }
-  };
-  usageInflight = scanUsage(log);
-  const settle = () => { usageInflight = null; };
-  usageInflight.then(settle, settle);
+  if (hadCache) {
+    // Stale-but-present data: never block the caller for a cold rescan —
+    // wait briefly, then hand back the previous numbers flagged stale.
+    const scan = withTimeout(usageInflight, USAGE_STALE_WAIT_MS);
+    const settled = await scan;
+    if (settled !== null && usageResultCache !== null) return usageCacheResult();
+    return usageCacheResult();
+  }
   return usageInflight;
 }
 
@@ -1392,6 +1563,7 @@ function resetUsageState() {
   usageSessions.clear();
   usageResultCache = null;
   usageInflight = null;
+  usageDiskSeeded = false; // allow re-seeding from disk after the service returns
 }
 
 async function dispatch(method, payload) {

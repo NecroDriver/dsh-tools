@@ -187,16 +187,18 @@ check('suggest with llm → ok, draft accumulates text-delta only, quotes stripp
 // --- settings: get defaults, set flags + model override, roundtrip on disk ---
 res = await post({ headers: baseHeaders, body: envelope('settings.get', {}) });
 message = JSON.parse(res.payload);
-check('settings.get → defaults with all features on',
+check('settings.get → defaults with all features on (incl. openSidebar)',
   envelopeGuard(res.payload) && message.result?.ok === true
   && message.result?.value?.settings?.features?.moreMenu === true
+  && message.result?.value?.settings?.features?.openSidebar === true
   && message.result?.value?.settings?.model?.provider === '');
-res = await post({ headers: baseHeaders, body: envelope('settings.set', { features: { generate: false, history: false }, model: { provider: 'fast', model: 'm-mini' } }) });
+res = await post({ headers: baseHeaders, body: envelope('settings.set', { features: { generate: false, history: false, openSidebar: false }, model: { provider: 'fast', model: 'm-mini' } }) });
 message = JSON.parse(res.payload);
 check('settings.set accepts flags + full model override',
   envelopeGuard(res.payload) && message.result?.ok === true
   && message.result?.value?.settings?.features?.generate === false
   && message.result?.value?.settings?.features?.history === false
+  && message.result?.value?.settings?.features?.openSidebar === false
   && message.result?.value?.settings?.features?.moreMenu === true
   && message.result?.value?.settings?.model?.provider === 'fast');
 res = await post({ headers: baseHeaders, body: envelope('settings.set', { model: { provider: 'fast', model: '' } }) });
@@ -207,7 +209,8 @@ check('settings.set rejects half model override (provider without model)',
 let settingsOnDisk = null;
 try { settingsOnDisk = JSON.parse(readFileSync(join(process.env.DSH_TOOLS_HOME, 'settings.json'), 'utf8')); } catch { /* fail below */ }
 check('settings persisted to DSH_TOOLS_HOME/settings.json',
-  settingsOnDisk?.features?.generate === false && settingsOnDisk?.model?.model === 'm-mini');
+  settingsOnDisk?.features?.generate === false && settingsOnDisk?.features?.openSidebar === false
+  && settingsOnDisk?.model?.model === 'm-mini');
 
 // --- quick phrases: normalize, persist, roundtrip ---
 res = await post({ headers: baseHeaders, body: envelope('settings.set', {

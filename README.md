@@ -78,7 +78,9 @@ the right sidebar pane:
   shows a status badge — **A**dded (green), **M**odified (blue), **D**eleted
   (red), **R**enamed (amber, with original path) — plus staged indication.
 - Clicking a file renders its diff (tracked files: `git diff HEAD`; untracked
-  files: a synthetic all-plus new-file diff).
+  files: a synthetic all-plus new-file diff). A toggle above the diff switches
+  between a unified view and a side-by-side comparison; the choice is
+  remembered across sessions.
 - Check a subset of files, then **commit** — the commit stages and commits only
   the checked paths, so unselected changes stay untouched in the working copy.
 - **AI 生成 / Generate message** asks the model to draft a commit message in
@@ -86,6 +88,15 @@ the right sidebar pane:
   style reference and includes the per-file diffs of exactly the selected
   files. The draft is editable before committing.
 - After committing, a **push** button appears on the group header.
+- **更新代码 / Update code** and **更新数据库 / Update database** buttons sit
+  both in the panel's header row, right beside the refresh button (batched
+  over every listed repository, with live progress and a summary note in a
+  slim line under the header), and on each group header (that repo only):
+  the former runs `git pull --rebase --autostash` (local uncommitted
+  changes are stashed and restored automatically), the latter runs
+  `pnpm prisma:generate` then `pnpm prisma:push`, skipping repositories that
+  don't declare those scripts. All update/push entries are disabled while a
+  batch or per-repo operation is in flight.
 
 ### 6. Quick phrases (composer)
 
@@ -110,6 +121,9 @@ the details:
 - today's total, plus one row per bucket — 输入 / 输出 / 缓存读 / 缓存写 —
   each with a proportional bar and its own compact value;
 - a **近 7 天** mini column chart (today highlighted in the accent color);
+  hovering a column instantly shows a tooltip with the date, weekday,
+  that day's total and its request count (columns also carry an
+  `aria-label` for assistive tech);
 - a meta line with request count and active-session count, and a footer with
   the last refresh time and a manual refresh button.
 
@@ -125,11 +139,18 @@ is collapsed to the icon rail the chip shrinks to a 32×32 icon button.
 
 A **工具设置** section in the app settings: one switch per feature (More menu,
 Generate, Optimize, Input history, Source Control, Quick phrases, Today's
-token usage), a custom model override (provider + model picked from the live
-`models.list` catalog — used by Generate/Optimize/commit-message instead of the
-session default), the quick-phrases editor (up to five entries), and the Source
-Control scan-roots editor (add via the native directory picker, remove
-individually).
+token usage, **Open the right sidebar on new sessions**), a custom model
+override (provider + model picked from the live `models.list` catalog — used by
+Generate/Optimize/commit-message instead of the session default), the
+quick-phrases editor (up to five entries), and the Source Control scan-roots
+editor (add via the native directory picker, remove individually).
+
+The **new-session sidebar** switch (on by default) makes every *new* session open
+with the right sidebar expanded (DSH itself has no such setting and ships each
+new session collapsed). An existing session that DSH restores at startup keeps
+its saved state (a blank session restored at startup counts as new and opens),
+revisiting a session you collapsed never re-expands it, and subagent sessions
+are left alone; keyboard focus stays in the composer.
 
 ## How it works
 

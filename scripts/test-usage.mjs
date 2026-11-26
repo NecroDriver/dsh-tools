@@ -6,7 +6,7 @@
 // Part 2: route-level 'usage.today' through the registered webServer route
 // with a fake sessionQuery service (two sessions, incremental rescan,
 // 30s cache, force bypass, dead-session pruning).
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -192,6 +192,7 @@ const usageState = () => {
 // --- route-level usage.today with fake sessionQuery -------------------------
 
 let route = null;
+let coldRoute = null;
 const fibers = [];
 const ctx = {
   logger: { info: () => {}, warn: () => {}, error: () => {} },
@@ -211,17 +212,18 @@ function nodeRequest({ method = 'POST', headers = {}, body = '' } = {}) {
     async *[Symbol.asyncIterator]() { if (body !== '') yield Buffer.from(body, 'utf8'); },
   };
 }
-const post = async (method, payload) => {
+const postVia = async (routeDef, method, payload) => {
   let resolveFinished;
   const finished = new Promise((resolve) => { resolveFinished = resolve; });
   const res = { status: 0, payload: null, writeHead(status) { this.status = status; }, end(payload) { this.payload = payload; resolveFinished(this); } };
-  route.handler(nodeRequest({
+  routeDef.handler(nodeRequest({
     headers: { host: '127.0.0.1:14489', 'content-type': 'application/json' },
     body: JSON.stringify({ type: 'client-request', rpcId: `r${Math.random()}`, method: 'dsh-tools', payload: { method, payload } }),
   }), res);
   const done = await finished;
   return JSON.parse(done.payload).result;
 };
+const post = (method, payload) => postVia(route, method, payload);
 
 // Fake sessionQuery: two sessions, one grows between scans.
 const logs = new Map([
@@ -264,6 +266,36 @@ for (const fiber of fibers) {
   const grown = (await post('usage.today', { force: true })).value;
   check('route: incremental rescan picks up appended events', grown.today.inputTokens === 150 && grown.today.requests === 2,
     JSON.stringify(grown?.today));
+
+  // scanUsage persisted its payload; a "restarted" module copy (fresh ESM URL)
+  // with NO sessionQuery service must still answer instantly from disk. Age the
+  // savedAt backwards first so the honest stale flag must come back true.
+  {
+    const cachePath = join(process.env.DSH_TOOLS_HOME, 'usage-cache.json');
+    const aged = JSON.parse(readFileSync(cachePath, 'utf8'));
+    aged.savedAt = Date.now() - 120_000;
+    writeFileSync(cachePath, JSON.stringify(aged));
+  }
+  const restarted = await import(`../index.js?cold=${Date.now()}-${Math.random()}`);
+  const coldFibers = [];
+  const coldCtx = {
+    logger: ctx.logger,
+    inject(names, cb) {
+      const fiber = { names, cb, dispose() {} };
+      coldFibers.push(fiber); // NOTE: cb deliberately never fired → service stays null
+      return fiber;
+    },
+    webServer: { register(def) { coldRoute = def; return () => { coldRoute = null; }; } },
+    connection: { fetch: { register() { return () => {}; } } },
+  };
+  restarted.apply(coldCtx);
+  const coldPost = (method, payload) => postVia(coldRoute, method, payload);
+  const started = Date.now();
+  const stale = await coldPost('usage.today', {});
+  const elapsed = Date.now() - started;
+  check('route: restart answers from disk cache with stale flag',
+    stale?.ok === true && stale.value?.stale === true && stale.value?.today?.inputTokens === 150 && elapsed < 1500,
+    `elapsed=${elapsed}ms ${JSON.stringify(stale?.value?.today ?? stale)}`);
 }
 
 // --- summary -----------------------------------------------------------------

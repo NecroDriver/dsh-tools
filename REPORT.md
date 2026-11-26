@@ -1,4 +1,4 @@
-# dsh-tools 交付报告（2026-11-23，v0.7.0）
+# dsh-tools 交付报告（2026-11-24，v0.7.11）
 
 ## 状态
 
@@ -16,6 +16,125 @@
 - v0.6.6：**常用语条重叠修复第一轮**（官方 `bottom:100%`+gap 定位 + 弹层避让 + a11y）——定位数学上与旧版同位，用户无感（详见 v0.6.7 节）。
 - v0.6.7：**常用语条改卡片内文档流**——彻底放弃悬浮定位（见下节）。
 - v0.7.0：**侧栏「今日 Token 用量」组件** + **常用语条卡片定位修复**（见下节）。
+- v0.7.5：**资源控制「更新代码 / 更新数据库」按钮**（面板顶栏 + 每个分组头，见下节）。
+- v0.7.6：**布局调整**——v0.7.5 的独立顶栏工具条并入标题行（刷新按钮旁），批量进度/摘要改为条件显示的细行（见下节）；另修复跨安装边界不生效问题（重装进 profile，见节内说明）。
+- v0.7.7：**面板设计/交互优化**（ui-ux-pro-max 规范评审驱动）——无障碍（图标按钮 aria-label、分组折叠 aria-expanded、批量进度 role=status、面板 aria-busy、勾选框 aria-label）、指针与反馈（全部可点元素 cursor:pointer + 120ms 过渡 + :active 按压态 + :focus-visible 焦点环）、scMini 提至 24px 命中高度、标题行与分组头的图标簇前加细分隔线（按钮分组辨识度）、文件行 `content-visibility:auto` 长列表渲染优化、加载中禁用刷新防双触发（见下节）。
+- v0.7.8：**图标对齐修复**（用户反馈：图标文字过近、中线不对齐、图标上飘）——icon() 包装 span 默认 `dsh-tools-scIco`（居中 flex 盒 + svg display:block，消除内联 svg 骑基线导致的下坠空隙），scMini gap 4→6px（见下节）。
+- v0.7.9：**diff 比对方向切换**（用户需求：改动详情页加按钮切换 横向/纵向）——diff 详情上方工具条新增切换按钮（scMini，图标+「横向」/「纵向」，aria-pressed），横向=side-by-side 双栏网格（旧/新行号+配对内容，连续 -/+ 段逐行配对、短侧留空），纵向=原 unified 逐行；偏好经 localStorage 持久化（无 DOM 环境自动降级为会话级）（见下节）。
+
+- v0.7.11：**推送图标更换**（用户反馈：旧的双向循环箭头与刷新图标太像、易误解）——改为上传式上箭头（arrow-up-out-of-tray），与「更新代码」的下载式下拉形成 拉取/推送 一对。
+- v0.7.10：**横向比对修正 + VSCode 风格 diff 视觉**（用户反馈：新文件横向展示错乱、布局丑）——根因=合成 untracked diff 缺 `@@` hunk 头（客户端全 `+` 行堆尾配对、左栏整列空、行号从 0 起）+ git preamble（diff --git/---/+++）被当内容渲染；服务端 syntheticNewFileDiff 补标准 hunk 头，客户端两种布局都过滤 preamble 并给无 hunk 兜底行号；视觉上 unified/split 的增删行加整行半透明色块 + 左缘指示条、hunk 头低调灰底小字、split 新侧行号列前加 1px 中线、行号 tabular-nums、diff 格 content-visibility（见下节）。
+- v0.7.11（续）：**工具设置新增「新会话默认展开右侧栏」开关**（默认开；用户需求：DSH 本身没有该设置，新增会话一律收起）——客户端 `registerSidebarAutoOpen` 监听 `sidebarRight.mounted` + `sessions.list`，只对"新"会话（启动基线之后出现、或 `blank === true` 的新建会话）调用 `sidebarRight.toggleExpanded()`，每个会话仅一次、子代理会话跳过、启动时恢复出来的既有会话保持持久化状态（启动恰好落在空白新会话上则视为新会话照常展开）、焦点留在输入框（见下节）。
+
+## v0.7.11（2026-11-24）
+
+### 工具设置：新会话默认展开右侧栏（开关，默认开）
+
+用户需求：「先检查当前 dsh 有没有配置能够控制新增会话时默认打开右侧侧边栏的设置，没有的话在 dsh-tools 新增配置项，默认打开」。
+
+**排查结论**：DSH 没有该设置。右栏实现在 `@deepseek-ai/dsh-client-ui-sidebar-right`：每个会话的布局（`expanded`/`mode`）按会话持久化在 `localStorage['dsh.sidebar-right.v1.<sessionId>']`，新会话的初始面（`createSurface()`）固定为"收起、单窗格、无标签"，首次展开时由 settle 规则播种默认引导页；`dsh-client-ui-settings-*` / `dsh-settings` 全部源码中没有任何右栏默认态相关的 schema/开关（设置页的"通用"区只是渲染 `settings.general.item` 槽位）。右栏唯一的公开控制面是 `ctx.sidebarRight`（`isExpanded()` / `toggleExpanded()` / `openTab()` / `openResource()` 等）。
+
+**实现**：
+- 配置：`features.openSidebar: true` 加入 `DEFAULT_SETTINGS.features`（index.js；`mergeSettings` / `handleSettingsSet` 按 key 泛化处理，无需改动），客户端 `featureFlags.openSidebar`、工具设置面板 TOGGLES 新增一行「新会话默认展开右侧栏 / Open the right sidebar on new sessions」（内联 DICTS zh/en）。
+- 行为（client.js `registerSidebarAutoOpen`）：注入 `sidebarRight` + `sessions`；记录启动基线（会话列表首次 `phase === 'ready'` 时的 id 集合，兜底 3 秒后取样）。启动选择：插件启动后 `sidebarRight.mounted` 的首次 `undefined → <会话>` 变化就是 DSH 的启动选择——非空白会话记为 `bootExempt`（保留其持久化状态，用户切到别的会话后失效）；空白会话（`blank === true`）本身就是新会话，照常展开；插件启动时已有会话在屏（HMR / 插件重载）则一律不动。`isNewSession(id)`：子代理（`origin === 'subagent'` 或有 `parentId`）→ 否；`blank === true`（点「新建会话」复用/新建的空白会话）→ 是；基线内 → 否；否则 `updatedAt` 在 10 分钟内 → 是。
+- 触发：只响应 `sidebarRight.mounted` 的**变化**（初值不触发），以及会话列表变化（覆盖"先上屏、后入列表"的时序）。每个会话最多展开一次（`handled`：展开成功或放弃重试后都记入）——用户手动收起后再切回来不会再次展开；开关在执行前实时读取（设置页关闭立即生效）。
+- 时序/焦点：因 `mounted` 在 React 渲染前变化、会话 store 要到 `rightbar.session` 槽位渲染时才被 adopt，`toggleExpanded()` 首次可能抛 `sidebarRight: no session surface is mounted` → 以 `setTimeout(0)` 起步（不在应用 store 的监听器内同步执行 flushSync）、40ms 间隔最多重试 25 次；`isExpanded()` 已为真则跳过；DSH 的 `toggleExpanded()` 会把 DOM 焦点移进侧栏，故先记录 `document.activeElement`（非 body/documentElement）否则取 `[data-composer-card] [contenteditable="true"]`，展开后立即 + 下一拍把焦点还回去（仅当焦点落在侧栏区域或 body 时才抢回）。
+- 注册：apply 中与其它模块一致 `try { keep(registerSidebarAutoOpen()) } catch (error) { console.warn('[dsh-tools] sidebar auto-open unavailable:', error) }`，cleanup 取消计时器、退订、释放 fiber。
+
+**测试**：新增 `scripts/test-sidebar-auto-open.cjs`（vm 沙箱 + 伪 `sidebarRight`/`sessions`，29 项：插件启动时已在屏的会话不动、启动选择四态（既有会话不动 / 空白会话展开且收起后切回不再展开 / 先经过首页再进空白会话也展开 / 开关关闭不展开）、既有会话/仅在列表未上屏的会话不触发、新空白会话展开一次、收起后切回不再展开、后到的 blank 也算、子代理永不触发、首条已发送的新会话展开、先上屏后入列表时在入列时展开、后入列表的旧会话不展开、焦点回到输入框/原元素、已展开不重复、adopt 竞态重试、中途离开停止重试且回来重试、重试预算恰 25 次后放弃且不再重试、dispose 退订、开关关闭 0 次调用）→ SIDEBAR AUTO-OPEN TEST PASS；smoke.mjs 增加 `openSidebar` 默认 true、可关闭并落盘的断言；`node --check` client.js/index.js 通过；test-client-render.cjs PASS（既有 SC/usage 流程不受影响）。注意 Windows 定时器最小粒度 ≈15ms，预算场景需等待 ≥600ms。
+**实机验证**（Playwright 连本机 GUI，真实应用）：开关开——冷启动落在空白会话 → 展开、焦点在输入框；切到既有会话后刷新（启动选择 = 既有会话）→ 保持收起；点「新建会话」→ 展开；手动收起 → 切到既有会话 → 再点「新建会话」→ 保持收起。开关关（设置页取消勾选并保存）——冷启动空白会话收起、「新建会话」保持收起，`settings.json` 的 `features.openSidebar` 随保存落盘；重新勾选保存后冷启动恢复展开。设置 → 工具设置面板可见「新会话默认展开右侧栏」一行（默认勾选）。
+
+### 推送图标更换
+
+用户反馈：「推送的图标换一下和刷新太像了，容易误解」。旧 push 图标是双向循环箭头（feather 循环样式），13px 下与刷新的旋转箭头易混。换成**上传式上箭头**（arrow-up-out-of-tray：托盘 + 上指箭头）——与「更新代码」的下载式下拉（arrow-down-into-tray）形成天然的 拉取/推送 语义对，三个图标（↓ 拉代码 / 圆柱 数据库 / ↑ 推送）+ 刷新（旋转箭头）互不混淆。仅改 SC_PUSH_GLYPH 常量，所有引用（分组头推送按钮）自动生效；测试断言走 title/aria-label，不受影响。
+
+## v0.7.10（2026-11-24）
+
+### 横向比对展示修正（bug）+ diff 视觉重做（用户：「点击了展示有问题，另外这布局好丑」）
+
+**根因**（用户截图实证：新文件 `I18nConfig.java` 的 diff 在横向模式下头部元数据被渲染、左栏全空）：`syntheticNewFileDiff`（index.js）产出的 untracked 合成 diff **没有 `@@` hunk 头**——`diff --git`/`new file mode`/`--- /dev/null` 行被 parseSplitRows 当上下文/删增内容渲染；全部 `+` 行没有段边界，堆到结尾一次性配对（del 侧全空）；行号从 0 起算。
+
+**修复**：
+- 服务端（index.js）：syntheticNewFileDiff 补 `@@ -0,0 +1,N @@`（N=行数），与真实 `git diff` 新文件输出完全一致。
+- 客户端（client.js）：① `isDiffPreamble` 识别 `diff --git /new file mode /deleted file mode /old mode /new mode /index /similarity index /dissimilarity index /rename from /rename to /Binary file /--- /+++ `，仅首个 hunk 前生效——两种布局都过滤（VSCode 式不渲染元数据；`(file no longer exists)` 提示行保留）；② 无 hunk 输入兜底：行号从 1 起（防旧缓存/异常来源）。
+
+**视觉重做**（ui-ux-pro-max design_review 复查，VSCode 风格）：
+- unified：`+`/`-` 行整行半透明色块（绿/红 10%，负 margin 从容器左缘铺满）+ 文字色不变；hunk 头缩为 10.5px 灰字。
+- split：删/增格子整格色块 + `inset 2px` 左缘指示条（红/绿 55%）；新侧行号列前 1px 中线分隔两栏；行号 `tabular-nums`；hunk 头整行灰底 10.5px；diff 格 `content-visibility:auto`（长 diff 只渲染视口内，评审 Rendering 规范落地）。色块 rgba 刻意非令牌（需深浅主题同时可读，与编辑器 diff 底色做法一致；文字色保持主题令牌）。
+
+**测试**：render stub 换真实 diff 形态（带 preamble、-/+ 正序），新增 3 断言（unified 过滤 preamble、split 过滤 preamble、split 行号跟随 hunk 头 `1,1,2,2`），80/80 PASS；test-sc.mjs 新增合成 diff hunk 头结构断言（`@@ -0,0 +1,N @@` 紧随 +++ 行），28 项 ALL CHECKS PASSED；usage 23、smoke 全绿。
+
+## v0.7.9（2026-11-24）
+
+### 改动详情页：比对方向切换（横向 side-by-side / 纵向 unified）
+
+用户在 diff 详情（点文件展开）场景提出：「改动详情页添加一个按钮，支持切换比对风格 横向和纵向」。
+
+- **入口**：diff 详情顶部新增 `scDiffBar` 细工具条（右对齐），一个 scMini 按钮：当前纵向时显示「纵向」+ 横分割线图标，当前横向时显示「横向」+ 竖分割线图标；`title` 提示两种方向，`aria-pressed` 反映 split 态。同一时刻仅影响打开的 diff（全局样式状态，切换即时生效）。
+- **横向（side-by-side）**：`parseSplitRows` 解析 unified diff——hunk 头 `@@ -a +b @@` 重置两侧行号；连续 `-`/`+` 段按索引逐行配对（删除红/新增绿），短的一侧留空占位；上下文行两侧同号同文；`\ No newline` 标记丢弃。渲染为 CSS Grid 四列（旧行号 | 旧内容 | 新行号 | 新内容），`minmax(0,1fr)` 保证两栏等宽、长行 `pre-wrap + overflow-wrap:anywhere` 在窄面板内优雅折行；hunk 头整行横跨。
+- **纵向（unified）**：原 DiffView 逐行 `<pre>` 不变。
+- **持久化**：`localStorage['dsh-tools.scDiffStyle']`（try/catch 包裹，render 测试沙箱等无 DOM 环境降级为会话内状态，默认纵向）。
+- **字典**：scDiffStyleTitle / scDiffSplit（横向/Side-by-side）/ scDiffUnified（纵向/Unified）。
+
+**测试**：node --check 通过；test-client-render.cjs 新增 7 项断言（按钮存在且未按下→点击后 split 网格出现、hunk 头保留、-world/+hello 正确配对到 del/add 格、aria-pressed 翻转、再点回 unified），合计 77/77 PASS；smoke.mjs、test-sc.mjs 27/27、test-usage.mjs 23/23 全绿。
+
+## v0.7.8（2026-11-24）
+
+### 图标对齐修复
+
+用户实测 v0.7.7 后反馈：「图标和文字相距过近，中线还不对齐，这图片都快飘天上去了」。根因：`icon(glyph, className)` 的包装 `<span>` 在未传 className 时无任何 display 规则，内嵌 `<svg>` 作为 inline 元素骑在文本基线上——基线下方还留着 descender 空隙，视觉上图标整体上飘、与旁边文字中线错位；且 scMini 的 `gap:4px` 偏紧。
+
+- `client.js` icon()：未传 className 时默认 `dsh-tools-scIco`（全部 8 处无类调用点一次性受益：标题行两个更新按钮、刷新、分组头三图标、AI 生成、标题图标；chevron 自有 scChev 类不受影响）。
+- CSS：`.dsh-tools-scIco{display:inline-flex;align-items:center;justify-content:center;flex:none;line-height:0}` + `.dsh-tools-scIco svg{display:block}`——svg 变块级、无基线问题，真正光学居中。
+- scMini `gap:4px→6px`。
+
+**测试**：node --check 通过；test-client-render.cjs 71/71、smoke.mjs 全绿（新增默认类不破坏既有断言）。
+
+## v0.7.7（2026-11-24）
+
+### 面板设计/交互优化（用户：「使用skill进行页面设计和交互优化」）
+
+用 ui-ux-pro-max 的 design_review 对面板做针对性评审（桌面端、源控面板场景），按严重度逐条核对落地：
+
+**无障碍（评审严重级）**
+- 所有图标按钮（标题行刷新、分组头 更新代码/更新数据库/推送）补 `aria-label`（此前只有 title，读屏不可靠）。
+- 分组折叠按钮补 `aria-expanded`；勾选框补 `aria-label`=文件路径；批量进度/摘要行补 `role="status"`（隐式 aria-live=polite，进度与最终摘要可被播报）；面板根补 `aria-busy`（加载中）。
+
+**指针/反馈/焦点（交付前检查清单）**
+- 此前按钮一律 `cursor:default`（视觉上不可点的错误信号）——scIconBtn/scMini/scGroupHeadMain/scFileMain 全部改 `cursor:pointer`，并统一加 120ms color/bg 过渡 + `:active:not(:disabled)` 按压态（背景加深，无布局位移）+ `:focus-visible` 焦点样式（scIconBtn 原有，scMini/scGroupHeadMain/scFileMain 本次补齐）。
+- scMini 高度 22→24px（WCAG 2.5.8 web 24px CSS 最小命中尺寸；scIconBtn 26px 已达标）。
+
+**分组辨识度与列表性能**
+- 标题行「更新代码/更新数据库」对与刷新按钮之间、分组头「全选/清空」与图标簇之间，加 1px 竖分隔线（`scVDiv`，主题边框色，aria-hidden）。
+- 文件行 `content-visibility:auto; contain-intrinsic-size:auto 26px`——大仓库（数百变更行）时跳过视口外行的渲染/布局，Chromium/Electron 生效。
+
+**防误触**
+- 加载期间（repos===null）标题行刷新按钮 disabled，防止连点重复触发全量扫描（加载态本身已有可见反馈）。
+
+**评审中核对过、无需改动的项**：loadAll 的 per-repo sc.status 已是 Promise.all 并行（并行拉取规范已达标）；状态徽标字母+颜色双通道（颜色非唯一指示）；「AI 生成」按钮文案已明示 AI（disclaimer 达标）；每仓 busy 时组内全部动作按钮已 disabled+note 反馈（加载指示达标）。虚拟长列表（>50 行 FlatList 级别）未做——面板以分组折叠为常态，content-visibility 已覆盖渲染成本，不引入虚拟化复杂度（刻意取舍）。
+
+**测试**：node --check 通过；test-client-render.cjs 71/71、smoke.mjs、test-sc.mjs 27/27、test-usage.mjs 23/23 全绿（新增 aria 属性与分隔线不破坏既有断言）。
+
+## v0.7.6（2026-11-24）
+
+### 布局调整：两按钮并入标题行（用户：「你这按钮布局也太丑了，就不能放刷新按钮旁边吗」）
+
+- 「更新代码」「更新数据库」两个批量按钮从独立 `scUpdateBar` 行（标题行与仓库列表之间、带边框占一整行）**移入 `scHeader` 标题行**，位于刷新图标按钮左侧；标题 `flex:1` 撑开，按钮靠右成组。
+- 批量进度（`更新代码 2/5…`）与摘要（`代码已更新 4 · 跳过 1 · 失败 0`）改用**条件渲染的细行** `scNoteRow`（6px 内边距、次级文字色、超长省略），空闲时整行隐藏——默认视图回到 v0.7.4 的干净样子。
+- CSS：`scUpdateBar` 规则删除，新增 `scNoteRow`；`scBatchNote` 去掉 `flex:1`（不再与按钮同行瓜分宽度）。
+- 同轮排障记录：用户重启后看不到 v0.7.5 按钮——**插件在 profile（`C:\Users\<user>\.dsh\profiles\<profile>\node_modules\dsh-tools`）是独立拷贝而非源码链接**，改工作区源码对已安装副本无效；须 `plugin_manager` remove_bundle + install_bundle 重装（本次实证 v0.7.0→v0.7.5 `application: applied`，副本核实 MODULE_VERSION/sc.pull/scUpdateBar 均在位）。以后凡改完源码必须重装进 profile 再让用户 F5。
+- 测试：node --check 两入口过；test-client-render.cjs 71 项 PASS（scMini/scBatchNote 类名未变，顶栏两按钮/批量扫全部/摘要断言原样通过）。
+
+## v0.7.5（2026-11-24）
+
+### 资源控制：更新代码 / 更新数据库按钮（用户 m00001：要求在「最上方和每个分组的右边」加两按钮）
+
+- 入口两处：① **面板顶栏**（标题行与仓库列表之间新增 `scUpdateBar`）——「更新代码」「更新数据库」两个按钮对**全部仓库**顺序批量执行，按钮旁实时显示进度（`更新代码 2/5…`），完成后显示摘要（`代码已更新 4 · 跳过 1 · 失败 0`，工作区切换自动清除）；② **每个分组头右侧**——两个图标按钮（下载/数据库图标，title 提示完整命令）只对该仓库执行，与原 push 按钮并排。批量进行中或任一仓库忙时所有入口禁用。
+- **更新代码** = `git pull --rebase --autostash`（沿用既有 `runGit` argv 数组通道，5 分钟超时）；**更新数据库** = `pnpm run prisma:generate` → `pnpm run prisma:push`（10 分钟超时，读仓库 package.json scripts，按序只跑存在的脚本）。
+- 语义细节：两脚本都不存在的仓库批量时计为「跳过」（busy note 显示「无 prisma 脚本，已跳过」），不会报错；单脚本失败即停并回传 `pnpm-error`（details 带 script 名）；Windows 下经 `cmd.exe /d /s /c` 启动 pnpm（.cmd shim 无法 CreateProcess 直启），脚本名为常量无注入面；成功后自动刷新该仓库状态。
+- Host 侧新增 RPC：`sc.pull` / `sc.prisma`（METHODS 表分发，`requireScRepo` 校验绝对路径 + .git）。
+- 测试：test-sc.mjs **27/27**（+8：无远端 pull→git-error / 真实 origin upstream 场景 pull 后 log 含上游提交且 autostash 保住本地脏改 / 无 scripts→no-prisma-scripts / echo 脚本两连跑 ran 数组正确 / 单脚本只跑一个 / 失败脚本→pnpm-error / 非绝对路径 bad-request）；test-client-render.cjs **71/71**（+7：分组两按钮存在并带 repo 路径调用 / 顶栏两按钮 / 批量扫全部仓库 / 摘要文案）；smoke 33、test-usage 23 回归过。
+- 测试踩坑（记录防复发）：render 桩的 `runEffects()` 每步无条件重放 mount effect→`loadAll()`，其开头的 `setBatchNote('')` 会清掉批量摘要——产品代码正确（真 React 仅在工作区切换重跑该 effect），测试改为在 runEffects 前 `tree = render()` 采样断言（已加注释）。
 
 ## v0.7.0（2026-11-23）
 

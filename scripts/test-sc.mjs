@@ -3,7 +3,9 @@
 // settings.sc.roots, then drives sc.* methods through the registered
 // webServer route: scan, status, diff (tracked + synthetic untracked),
 // partial commit (unselected changes must survive), log, AI commit message
-// (fake llm captures the composed prompt), and file-path traversal guards.
+// (fake llm captures the composed prompt), file-path traversal guards,
+// pull (git pull --rebase --autostash with a real origin), and the prisma
+// script runner (missing scripts / echo scripts / failing script).
 import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, rmSync as rmFile, renameSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -167,6 +169,9 @@ check('sc.diff untracked file → synthetic all-plus diff',
   r.ok === true && (r.value?.diff ?? '').includes('brand new file')
   && (r.value?.diff ?? '').startsWith('diff --git') === true,
   `diff=${JSON.stringify((r.value?.diff ?? '').slice(0, 140))}`);
+check('sc.diff untracked synthetic carries @@ hunk header (v0.7.10)',
+  /^diff --git[^\n]*\nnew file mode[^\n]*\n--- \/dev\/null\n\+\+\+ [^\n]*\n@@ -0,0 \+1,\d+ @@\n\+/.test(r.value?.diff ?? '') === true,
+  `head=${JSON.stringify((r.value?.diff ?? '').split('\n').slice(0, 5).join('⏎'))}`);
 r = await post('sc.diff', { repo: repoA, file: 'b.txt' });
 check('sc.diff untracked without flag still auto-synthetic (ls-files probe)',
   r.ok === true && (r.value?.diff ?? '').includes('brand new file'));
@@ -236,6 +241,83 @@ r = await post('sc.push', { repo: repoA });
 check('sc.push without remote → git-error failure with details',
   r.ok === false && r.error?.code === 'git-error' && typeof r.error?.details?.repo === 'string',
   `code=${r.error?.code}`);
+
+// --- sc.pull: no remote → git-error guard, not a crash ---
+r = await post('sc.pull', { repo: repoB });
+check('sc.pull without remote → git-error failure',
+  r.ok === false && r.error?.code === 'git-error',
+  `code=${r.error?.code}`);
+
+// --- sc.pull: real origin + dirty worktree (autostash must survive) ---
+const upstream = join(root, 'upstream');
+initRepo(upstream);
+writeFileSync(join(upstream, 'shared.txt'), 'v1\n');
+git(upstream, 'add', '-A');
+git(upstream, 'commit', '-m', 'upstream: v1');
+const cloned = join(root, 'cloned');
+execFileSync('git', ['clone', upstream, cloned], { encoding: 'utf8', windowsHide: true });
+git(cloned, 'config', 'user.name', 'SC Test');
+git(cloned, 'config', 'user.email', 'sc-test@example.com');
+writeFileSync(join(upstream, 'shared.txt'), 'v2 from upstream\n');
+git(upstream, 'add', '-A');
+git(upstream, 'commit', '-m', 'upstream: v2');
+writeFileSync(join(cloned, 'shared.txt'), 'v1\nlocal dirty edit\n'); // autostash candidate
+r = await post('sc.pull', { repo: cloned });
+const pulledShared = readFileSync(join(cloned, 'shared.txt'), 'utf8');
+let clonedLog = '';
+try { clonedLog = git(cloned, 'log', '--pretty=format:%s'); } catch { /* unchanged */ }
+check('sc.pull rebases onto origin and autostashes local edit',
+  r.ok === true && clonedLog.includes('upstream: v2')
+  && pulledShared.includes('v2 from upstream') && pulledShared.includes('local dirty edit'),
+  `ok=${r.ok} log=${JSON.stringify(clonedLog)} shared=${JSON.stringify(pulledShared)}`);
+
+// --- sc.prisma: repo without prisma scripts → distinct no-prisma-scripts code ---
+r = await post('sc.prisma', { repo: repoB });
+check('sc.prisma without scripts → no-prisma-scripts failure',
+  r.ok === false && r.error?.code === 'no-prisma-scripts' && typeof r.error?.details?.repo === 'string',
+  `code=${r.error?.code}`);
+
+// --- sc.prisma: both echo scripts run in order (real pnpm) ---
+writeFileSync(join(repoB, 'package.json'), JSON.stringify({
+  name: 'beta-fixture',
+  private: true,
+  scripts: { 'prisma:generate': 'echo gen-ok', 'prisma:push': 'echo push-ok' },
+}, null, 2));
+r = await post('sc.prisma', { repo: repoB });
+check('sc.prisma runs prisma:generate then prisma:push via pnpm',
+  r.ok === true && (r.value?.ran ?? []).join(',') === 'prisma:generate,prisma:push'
+  && (r.value?.output ?? '').includes('gen-ok') === true
+  && (r.value?.output ?? '').includes('push-ok') === true,
+  `ran=${JSON.stringify(r.value?.ran)} output=${JSON.stringify((r.value?.output ?? '').slice(0, 200))}`);
+
+// --- sc.prisma: only one script present → runs just that one ---
+writeFileSync(join(repoA, 'package.json'), JSON.stringify({
+  name: 'alpha-fixture',
+  private: true,
+  scripts: { 'prisma:generate': 'echo gen-only' },
+}, null, 2));
+r = await post('sc.prisma', { repo: repoA });
+check('sc.prisma with a single script runs only it',
+  r.ok === true && (r.value?.ran ?? []).join(',') === 'prisma:generate'
+  && (r.value?.output ?? '').includes('gen-only') === true,
+  `ran=${JSON.stringify(r.value?.ran)}`);
+
+// --- sc.prisma: failing script → pnpm-error carrying the script name ---
+writeFileSync(join(repoB, 'package.json'), JSON.stringify({
+  name: 'beta-fixture',
+  private: true,
+  scripts: { 'prisma:generate': 'echo gen-ok', 'prisma:push': 'echo boom >&2 && exit 1' },
+}, null, 2));
+r = await post('sc.prisma', { repo: repoB });
+check('sc.prisma failing script → pnpm-error with script detail',
+  r.ok === false && r.error?.code === 'pnpm-error' && r.error?.details?.script === 'prisma:push',
+  `code=${r.error?.code} script=${r.error?.details?.script} msg=${JSON.stringify((r.error?.message ?? '').slice(0, 160))}`);
+
+// --- sc.pull / sc.prisma: malformed repo path → bad-request ---
+r = await post('sc.pull', { repo: 'relative/path' });
+check('sc.pull rejects non-absolute repo', r.ok === false && r.error?.code === 'bad-request');
+r = await post('sc.prisma', { repo: 'relative/path' });
+check('sc.prisma rejects non-absolute repo', r.ok === false && r.error?.code === 'bad-request');
 
 const failed = results.filter((entry) => !entry.ok);
 for (const dir of [process.env.DSH_TOOLS_HOME, root]) {
