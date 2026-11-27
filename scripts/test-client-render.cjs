@@ -211,6 +211,8 @@ const schedule = () => {
 const react = new MiniReact(schedule);
 
 const calls = [];
+let lastRunKind = 'pull';
+let procPollCount = 0;
 const stubs = {
   'settings.get': () => ({ ok: true, value: { settings: {
     features: { moreMenu: true, generate: true, optimize: true, history: true, sc: true, phrases: true },
@@ -239,6 +241,33 @@ const stubs = {
   'sc.push': () => ({ ok: true, value: { output: 'pushed' } }),
   'sc.pull': () => ({ ok: true, value: { repo: 'C:/t/repo-a', output: 'Already up to date.' } }),
   'sc.prisma': () => ({ ok: true, value: { repo: 'C:/t/repo-a', ran: ['prisma:generate', 'prisma:push'], output: 'done' } }),
+  // v0.8.0 interactive sessions: sc.run mints sessionId; procOutput feeds
+  // one "partial" chunk then completes, so the poll chain (setTimeout runs
+  // as a microtask here) exercises incremental appends before resolving.
+  'sc.run': (payload) => {
+    lastRunKind = payload?.kind === 'prisma' ? 'prisma' : 'pull';
+    return {
+      ok: true,
+      value: {
+        sessionId: 'sess-1',
+        repo: payload?.repo,
+        kind: lastRunKind,
+        command: lastRunKind === 'prisma'
+          ? 'pnpm run prisma:generate && pnpm run prisma:push'
+          : 'git pull --rebase --autostash',
+      },
+    };
+  },
+  'sc.procOutput': () => {
+    procPollCount += 1;
+    if (procPollCount % 2 === 1) {
+      return { ok: true, value: { output: 'partial', total: 7, done: false, exitCode: null, kind: lastRunKind } };
+    }
+    return { ok: true, value: { output: ' + done', total: 17, done: true, exitCode: 0, kind: lastRunKind } };
+  },
+  'sc.procInput': () => ({ ok: true, value: {} }),
+  'sc.procKill': () => ({ ok: true, value: {} }),
+  'sc.rebaseAbort': () => ({ ok: true, value: { repo: 'C:/t/repo-a', output: '' } }),
   'usage.today': () => ({ ok: true, value: {
     timeZone: 'Asia/Shanghai',
     today: { day: '2026-11-23', isToday: true, inputTokens: 180_000, outputTokens: 42_000, cacheReadTokens: 980_000, cacheWriteTokens: 32_500, requests: 17, total: 1_234_500 },
@@ -436,34 +465,48 @@ const runEffects = async () => {
   check('push called', calls.some((c) => c.method === 'sc.push'));
 
   // 6b) v0.7.5 per-group update buttons: 更新代码 / 更新数据库 icons
+  //     (v0.8.0: both now drive interactive sc.run sessions + a console)
   const pullBtn = findAll(tree, byClass('dsh-tools-scIconBtn'))
     .find((b) => b.props.title === '更新代码：git pull --rebase --autostash');
   check('group update-code button present', pullBtn !== undefined);
   pullBtn.props.onClick();
-  await settle(); await settle();
+  await settle(); await settle(); await settle();
+  // Sample BEFORE runEffects()/step(): this harness re-fires the mount
+  // effect, whose loadAll() intentionally resets the console sessions
+  // (a rescan resets the panel in production too).
+  tree = render();
+  check('sc.run called with repo path + kind pull (v0.8.0)',
+    calls.some((c) => c.method === 'sc.run' && c.payload?.repo === 'C:/t/repo-a' && c.payload?.kind === 'pull'));
+  check('console block rendered (v0.8.0)', findAll(tree, byClass('dsh-tools-scConsole')).length === 1);
+  const consoleOut = findAll(tree, byClass('dsh-tools-scConsoleOut'))[0];
+  check('console streams incremental chunks', String(consoleOut?.children[0] ?? '').includes('partial')
+    && String(consoleOut?.children[0] ?? '').includes(' + done'));
+  check('console state shows exit 0', findAll(tree, byClass('dsh-tools-scConsoleState'))[0]?.children[0] === '退出码 0');
+  check('console copy action present',
+    findAll(tree, byClass('dsh-tools-scMini')).some((b) => b.children.some((c) => c?.children?.[0] === '复制输出')));
   await step();
-  check('sc.pull called with repo path', calls.some((c) => c.method === 'sc.pull' && c.payload?.repo === 'C:/t/repo-a'));
   check('pull success note', findAll(tree, (n) => n.children[0] === '代码已更新').length === 1);
   const dbBtn = findAll(tree, byClass('dsh-tools-scIconBtn'))
     .find((b) => b.props.title === '更新数据库：pnpm prisma:generate → pnpm prisma:push');
   check('group update-database button present', dbBtn !== undefined);
   dbBtn.props.onClick();
-  await settle(); await settle();
-  check('sc.prisma called with repo path', calls.some((c) => c.method === 'sc.prisma' && c.payload?.repo === 'C:/t/repo-a'));
+  await settle(); await settle(); await settle();
+  check('sc.run called with repo path + kind prisma (v0.8.0)',
+    calls.some((c) => c.method === 'sc.run' && c.payload?.repo === 'C:/t/repo-a' && c.payload?.kind === 'prisma'));
 
   // 6c) v0.7.5 top update bar: both buttons sweep every listed repository
   const barButtons = findAll(tree, byClass('dsh-tools-scMini'));
   const topPull = barButtons.find((b) => b.children.some((c) => c?.children?.[0] === '更新代码'));
   const topDb = barButtons.find((b) => b.children.some((c) => c?.children?.[0] === '更新数据库'));
   check('top update bar shows both buttons', topPull !== undefined && topDb !== undefined);
-  const pullsBefore = calls.filter((c) => c.method === 'sc.pull').length;
+  const pullsBefore = calls.filter((c) => c.method === 'sc.run').length;
   topPull.props.onClick();
   await settle(); await settle(); await settle();
   // Sample BEFORE runEffects(): this fake harness re-fires every effect on
   // each step(), which re-runs loadAll() and its intentional batchNote
   // reset — real React only re-runs that effect on a workspace switch.
   tree = render();
-  check('batch pull swept the repo', calls.filter((c) => c.method === 'sc.pull').length === pullsBefore + 1);
+  check('batch pull swept the repo', calls.filter((c) => c.method === 'sc.run').length === pullsBefore + 1);
   check('batch summary note', findAll(tree, byClass('dsh-tools-scBatchNote'))[0]?.children[0] === '代码已更新 1');
 
   // 7) quick phrases: hidden overlay host injects an in-card row above the

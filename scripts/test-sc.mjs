@@ -236,6 +236,39 @@ check('sc.commitMessage → ok draft from llm, prompt carries history + per-file
 check('sc.commitMessage uses selection-route model',
   seenPrepareCalls.at(-1)?.provider === 'deepseek' && seenPrepareCalls.at(-1)?.model === 'test-model');
 
+// --- v0.8.2: AI commit draft must pass sc.commit validation ---
+// Model streams can carry CRLF (\r is a control char → bad-request) and can
+// ignore soft length asks, so the draft pipeline normalizes both.
+const seenSystems = [];
+let commitYield = 'feat: modify b and e';
+fakeLlm.prepareCall = async (config) => {
+  seenPrepareCalls.push(config);
+  return {
+    config: { provider: config.provider, model: config.model },
+    stream: async function* gen(options) {
+      seenUserMessages.push(options?.messages?.[0]?.content?.[0]?.text ?? '');
+      seenSystems.push(String(options?.system ?? ''));
+      yield { type: 'text-delta', index: 0, text: commitYield };
+    },
+  };
+};
+commitYield = 'feat: multi\r\n\r\nbody one\r\nbody two\r';
+r = await post('sc.commitMessage', { repo: repoA, files: ['b.txt'], lang: 'zh' });
+check('commit draft normalizes CRLF/CR to LF (control chars stripped)',
+  r.ok === true && !/[\u0000-\u0008\u000b-\u001f]/.test(r.value?.draft ?? '')
+    && (r.value?.draft ?? '') === 'feat: multi\n\nbody one\nbody two',
+  `draft=${JSON.stringify(r.value?.draft)}`);
+check('commit system prompt carries hard length limits (400 total / 72 subject)',
+  (seenSystems.at(-1) ?? '').includes('400') && (seenSystems.at(-1) ?? '').includes('72'),
+  `systemHead=${JSON.stringify((seenSystems.at(-1) ?? '').slice(0, 80))}`);
+commitYield = `feat: ${'a'.repeat(100)}\n\n${'x'.repeat(600)}`;
+r = await post('sc.commitMessage', { repo: repoA, files: ['b.txt'], lang: 'zh' });
+check('commit draft over 500 chars truncates on a line boundary (subject survives)',
+  r.ok === true && (r.value?.draft ?? '').length <= 500 && (r.value?.draft ?? '') === `feat: ${'a'.repeat(100)}`,
+  `len=${(r.value?.draft ?? '').length} draft=${JSON.stringify((r.value?.draft ?? '').slice(0, 60))}`);
+r = await post('sc.commit', { repo: repoA, files: ['b.txt'], message: 'y'.repeat(501) });
+check('sc.commit still rejects >500-char message', r.ok === false && r.error?.code === 'bad-request');
+
 // --- v0.8 sc.revert: M/D/R restored from HEAD, A (untracked + staged) deleted ---
 mkdirSync(join(repoA, 'nested'), { recursive: true });
 writeFileSync(join(repoA, 'nested', 'n.txt'), 'untracked nested\n');
@@ -345,6 +378,184 @@ r = await post('sc.pull', { repo: 'relative/path' });
 check('sc.pull rejects non-absolute repo', r.ok === false && r.error?.code === 'bad-request');
 r = await post('sc.prisma', { repo: 'relative/path' });
 check('sc.prisma rejects non-absolute repo', r.ok === false && r.error?.code === 'bad-request');
+
+// ==========================================================================
+// v0.8.0 — interactive process sessions (sc.run / sc.procOutput /
+// sc.procInput / sc.procKill / sc.rebaseAbort)
+// ==========================================================================
+const pollUntil = async (sessionId, predicate, { intervalMs = 60, timeoutMs = 45000 } = {}) => {
+  const start = Date.now();
+  for (;;) {
+    const res = await post('sc.procOutput', { sessionId, since: 0 });
+    if (res.ok !== true) return res;
+    if (predicate(res.value)) return res;
+    if (Date.now() - start > timeoutMs) {
+      return { ok: false, error: { code: 'test-timeout', message: String(res.value?.output ?? '').slice(-200) } };
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+};
+const pollDone = (sessionId) => pollUntil(sessionId, (value) => value?.done === true);
+
+// fixture: interactive repo whose prisma:push asks a y/n question on stdin
+const askRepo = mkdtempSync(join(tmpdir(), 'dsh-tools-sc-ask-'));
+initRepo(askRepo);
+git(askRepo, 'commit', '--allow-empty', '-m', 'ask: init');
+mkdirSync(join(askRepo, 'scripts'), { recursive: true });
+writeFileSync(join(askRepo, 'scripts', 'ask.mjs'), [
+  "process.stdout.write('continue? ');",
+  "const chunk = await new Promise((resolve) => {",
+  "  process.stdin.once('data', resolve);",
+  "  process.stdin.once('end', () => resolve(Buffer.alloc(0)));",
+  "});",
+  "const answer = String(chunk).trim().toLowerCase();",
+  "console.log(`YOU SAID ${answer}`);",
+  "process.exit(answer === 'y' ? 0 : 3);",
+  '',
+].join('\n'));
+writeFileSync(join(askRepo, 'package.json'), JSON.stringify({
+  name: 'ask-fixture',
+  private: true,
+  scripts: { 'prisma:generate': 'echo gen-ok', 'prisma:push': 'node scripts/ask.mjs' },
+}, null, 2));
+
+// fixture: sleeping repos (long-lived sessions for busy/limit/kill tests)
+const makeSleepRepo = (label) => {
+  const dir = mkdtempSync(join(tmpdir(), `dsh-tools-sc-${label}-`));
+  initRepo(dir);
+  git(dir, 'commit', '--allow-empty', '-m', `${label}: init`);
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  writeFileSync(join(dir, 'scripts', 'sleep.mjs'), 'setTimeout(() => process.exit(0), 30000);\n');
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: `${label}-fixture`,
+    private: true,
+    scripts: { 'prisma:generate': 'node scripts/sleep.mjs' },
+  }, null, 2));
+  return dir;
+};
+const sleepRepos = [makeSleepRepo('sleep1'), makeSleepRepo('sleep2'), makeSleepRepo('sleep3'), makeSleepRepo('sleep4')];
+
+// --- sc.run prisma + interactive stdin: procInput answers the prompt ---
+r = await post('sc.run', { repo: askRepo, kind: 'prisma' });
+check('sc.run prisma starts a session and reports the command',
+  r.ok === true && typeof r.value?.sessionId === 'string'
+    && r.value.command === 'pnpm run prisma:generate && pnpm run prisma:push'
+    && r.value.kind === 'prisma',
+  `ok=${r.ok} command=${JSON.stringify(r.value?.command)}`);
+const askId = r.value.sessionId;
+r = await pollUntil(askId, (value) => String(value?.output ?? '').includes('continue?'));
+check('sc.procOutput streams the prompt while running',
+  r.ok === true && r.value?.done === false,
+  `output=${JSON.stringify(String(r.value?.output ?? '').slice(-80))} err=${JSON.stringify(r.error)}`);
+// incremental since: everything up to the prompt must not replay at since=total
+const promptTotal = r.value?.total ?? 0;
+r = await post('sc.procOutput', { sessionId: askId, since: promptTotal });
+check('sc.procOutput honors since (no replay of consumed output)',
+  r.ok === true && !String(r.value?.output ?? '').includes('continue?'),
+  `since=${promptTotal} output=${JSON.stringify(r.value?.output)}`);
+r = await post('sc.procInput', { sessionId: askId, line: 'y' });
+check('sc.procInput delivers a line to the child', r.ok === true, `err=${JSON.stringify(r.error)}`);
+r = await pollDone(askId);
+check('answered session exits 0 with the answer echoed',
+  r.ok === true && r.value?.exitCode === 0 && String(r.value?.output ?? '').includes('YOU SAID y'),
+  `exit=${r.value?.exitCode} output=${JSON.stringify(String(r.value?.output ?? '').slice(-80))}`);
+
+// --- finished session rejects further input; empty line is bad-request ---
+r = await post('sc.procInput', { sessionId: askId, line: 'y' });
+check('sc.procInput on finished session → proc-done', r.ok === false && r.error?.code === 'proc-done',
+  `code=${r.error?.code}`);
+r = await post('sc.procInput', { sessionId: 'nope' });
+check('sc.procInput unknown session → bad-request', r.ok === false && r.error?.code === 'bad-request',
+  `code=${r.error?.code}`);
+
+// --- non-zero exit propagates (answer n → exit 3) ---
+r = await post('sc.run', { repo: askRepo, kind: 'prisma' });
+const askId2 = r.value?.sessionId;
+await pollUntil(askId2, (value) => String(value?.output ?? '').includes('continue?'));
+await post('sc.procInput', { sessionId: askId2, line: 'n' });
+r = await pollDone(askId2);
+check('sc.procOutput reports non-zero exit code',
+  r.ok === true && r.value?.exitCode === 3 && String(r.value?.output ?? '').includes('YOU SAID n'),
+  `exit=${r.value?.exitCode}`);
+
+// --- proc-busy: same repo cannot run two live sessions ---
+r = await post('sc.run', { repo: sleepRepos[0], kind: 'prisma' });
+const busyId = r.value?.sessionId;
+check('sc.run starts the long session', r.ok === true, `err=${JSON.stringify(r.error)}`);
+r = await post('sc.run', { repo: sleepRepos[0], kind: 'prisma' });
+check('sc.run on a busy repo → proc-busy',
+  r.ok === false && r.error?.code === 'proc-busy' && r.error?.details?.sessionId === busyId,
+  `code=${r.error?.code}`);
+
+// --- proc-limit: cap concurrent sessions across repos (max 4) ---
+const limitIds = [busyId];
+for (const repo of sleepRepos.slice(1)) {
+  const started = await post('sc.run', { repo, kind: 'prisma' });
+  limitIds.push(started.value?.sessionId);
+}
+r = await post('sc.run', { repo: askRepo, kind: 'pull' });
+check('sc.run beyond SC_PROC_MAX → proc-limit',
+  r.ok === false && r.error?.code === 'proc-limit',
+  `code=${r.error?.code}`);
+
+// --- procKill: tree-kill marks killReason and finishes the session ---
+r = await post('sc.procKill', { sessionId: busyId });
+check('sc.procKill acknowledges', r.ok === true, `err=${JSON.stringify(r.error)}`);
+r = await pollDone(busyId);
+check('killed session is done with killReason user and non-zero exit',
+  r.ok === true && r.value?.killReason === 'user' && r.value?.exitCode !== 0,
+  `reason=${r.value?.killReason} exit=${r.value?.exitCode}`);
+for (const id of limitIds) { await post('sc.procKill', { sessionId: id }); }
+await Promise.all(limitIds.map((id) => pollDone(id)));
+
+// --- acceptDataLoss flag reaches the prisma:push command line ---
+writeFileSync(join(repoA, 'package.json'), JSON.stringify({
+  name: 'alpha-fixture',
+  private: true,
+  scripts: { 'prisma:generate': 'echo gen-ok', 'prisma:push': 'echo push-flag' },
+}, null, 2));
+r = await post('sc.run', { repo: repoA, kind: 'prisma', acceptDataLoss: true });
+check('sc.run acceptDataLoss appends the flag to prisma:push',
+  r.ok === true && String(r.value?.command ?? '').includes('pnpm run prisma:push -- --accept-data-loss'),
+  `command=${JSON.stringify(r.value?.command)}`);
+await pollDone(r.value.sessionId);
+
+// --- rebase conflict → non-zero exit → sc.rebaseAbort restores the repo ---
+const confUpstream = join(root, 'conf-upstream');
+initRepo(confUpstream);
+writeFileSync(join(confUpstream, 'shared.txt'), 'v1\n');
+git(confUpstream, 'add', '-A');
+git(confUpstream, 'commit', '-m', 'upstream: v1');
+const confRepo = join(root, 'conf-cloned');
+execFileSync('git', ['clone', confUpstream, confRepo], { encoding: 'utf8', windowsHide: true });
+git(confRepo, 'config', 'user.name', 'SC Test');
+git(confRepo, 'config', 'user.email', 'sc-test@example.com');
+writeFileSync(join(confUpstream, 'shared.txt'), 'v2 upstream\n');
+git(confUpstream, 'add', '-A');
+git(confUpstream, 'commit', '-m', 'upstream: v2');
+writeFileSync(join(confRepo, 'shared.txt'), 'v2 local\n');
+git(confRepo, 'add', '-A');
+git(confRepo, 'commit', '-m', 'local: v2');
+r = await post('sc.run', { repo: confRepo, kind: 'pull' });
+const confId = r.value?.sessionId;
+r = await pollDone(confId);
+check('conflicting pull session exits non-zero and surfaces CONFLICT',
+  r.ok === true && r.value?.exitCode !== 0 && /CONFLICT|could not apply/i.test(String(r.value?.output ?? '')),
+  `exit=${r.value?.exitCode} output=${JSON.stringify(String(r.value?.output ?? '').slice(-160))}`);
+r = await post('sc.rebaseAbort', { repo: confRepo });
+check('sc.rebaseAbort succeeds', r.ok === true, `err=${JSON.stringify(r.error)}`);
+const rebaseClean = !existsSync(join(confRepo, '.git', 'rebase-merge'))
+  && !existsSync(join(confRepo, '.git', 'rebase-apply'));
+const statusPorcelain = git(confRepo, 'status', '--porcelain');
+check('rebase --abort leaves no rebase state and a clean tree',
+  rebaseClean && statusPorcelain === '',
+  `restate=${rebaseClean} status=${JSON.stringify(statusPorcelain)}`);
+
+// --- sc.run / sc.rebaseAbort guards ---
+r = await post('sc.run', { repo: 'relative/path' });
+check('sc.run rejects non-absolute repo', r.ok === false && r.error?.code === 'bad-request');
+r = await post('sc.procOutput', { sessionId: 42, since: 'x' });
+check('sc.procOutput requires a string sessionId', r.ok === false && r.error?.code === 'bad-request');
 
 const failed = results.filter((entry) => !entry.ok);
 for (const dir of [process.env.DSH_TOOLS_HOME, root]) {

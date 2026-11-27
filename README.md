@@ -97,6 +97,16 @@ the right sidebar pane:
   `pnpm prisma:generate` then `pnpm prisma:push`, skipping repositories that
   don't declare those scripts. All update/push entries are disabled while a
   batch or per-repo operation is in flight.
+- **Process console (v0.8.1)** — per-repo updates run as interactive process
+  sessions instead of fire-and-forget calls: a terminal-style console embeds
+  inside the repo group, streaming the command's output live (command line
+  and exit-code status in its header). While the command runs you can send
+  it stdin lines (input box, Enter to send) or kill the whole process tree
+  with one click. Failures get targeted one-click actions: a Prisma
+  data-loss error offers "accept data loss and retry" (re-runs with
+  `-- --accept-data-loss`), a rebase conflict offers "abort this update"
+  (`git rebase --abort`), and the full output can always be copied.
+  Batch runs walk every repo through the same sessions sequentially.
 
 ### 6. Quick phrases (composer)
 

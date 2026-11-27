@@ -35,7 +35,7 @@ export const inject = ['webServer', 'connection'];
 
 // Single source of truth for the running generation; dev.ping reports it so the
 // Client can confirm a hot reload actually swapped this module.
-const MODULE_VERSION = 'v0.8.0';
+const MODULE_VERSION = 'v0.8.2';
 
 const RPC_KEY = 'dsh-tools';
 const HELPER_PATH = join(tmpdir(), 'dsh-tools-restart.ps1');
@@ -350,6 +350,11 @@ const METHODS = {
   'sc.pull': handleScPull,
   'sc.revert': handleScRevert,
   'sc.prisma': handleScPrisma,
+  'sc.run': handleScRun,
+  'sc.procOutput': handleScProcOutput,
+  'sc.procInput': handleScProcInput,
+  'sc.procKill': handleScProcKill,
+  'sc.rebaseAbort': handleScRebaseAbort,
   'usage.today': handleUsageToday,
 };
 
@@ -622,10 +627,13 @@ const OPTIMIZE_SYSTEMS = {
 };
 
 const COMMIT_MAX_TOKENS = 200;
+// v0.8.2 sc.commit rejects >500 chars / control chars — the draft pipeline
+// must stay inside the same budget so an AI draft never trips validation.
+const SC_COMMIT_MSG_MAX = 500;
 
 const COMMIT_SYSTEMS = {
-  zh: '你在帮用户为一个 git 提交写 commit message。下面提供该仓库最近的提交标题（风格参考）和本次要提交的改动内容（diff）。请生成一条与仓库历史风格一致的 commit message：沿用历史的语言与格式（例如历史用 conventional commits 前缀「type(scope):」就照用），准确概括这些改动做了什么。只输出 commit message 本身：首行不超过 72 个字符，需要时可用一个空行接正文；不要任何解释、引号或代码围栏。',
-  en: 'You write a commit message for one git commit. The repository\'s recent commit subjects (style reference) and the diff being committed are provided below. Produce a commit message consistent with the repository\'s history: same language and format as the history (e.g. keep conventional-commits "type(scope):" prefixes if the history uses them), accurately summarizing what these changes do. Output only the commit message itself: first line ≤72 characters, optionally a blank line then a body; no explanations, quotes, or code fences.',
+  zh: '你在帮用户为一个 git 提交写 commit message。下面提供该仓库最近的提交标题（风格参考）和本次要提交的改动内容（diff）。请生成一条与仓库历史风格一致的 commit message：沿用历史的语言与格式（例如历史用 conventional commits 前缀「type(scope):」就照用），准确概括这些改动做了什么。硬性长度限制：首行不超过 72 个字符；全文（首行+空行+正文）总长不超过 400 个字符——正文只挑 2~4 个关键点，绝不逐文件罗列，小改动只写首行即可。只输出 commit message 本身：首行，需要时空一行接正文；不要任何解释、引号或代码围栏。',
+  en: 'You write a commit message for one git commit. The repository\'s recent commit subjects (style reference) and the diff being committed are provided below. Produce a commit message consistent with the repository\'s history: same language and format as the history (e.g. keep conventional-commits "type(scope):" prefixes if the history uses them), accurately summarizing what these changes do. Hard length limits: first line ≤72 characters; the whole message (subject + blank line + body) stays under 400 characters total — in the body pick only 2-4 key points, never enumerate file by file, and a subject-only message is fine for small changes. Output only the commit message itself: subject line, optionally a blank line then a body; no explanations, quotes, or code fences.',
 };
 
 /** Extract and normalize the text a suggest draft will be based on. */
@@ -643,6 +651,24 @@ export function cleanSuggestDraft(raw) {
   if (fenced !== null) draft = fenced[1].trim();
   draft = draft.replace(/^[「"“'‘]+/, '').replace(/[」"”'’]+$/, '').trim();
   if (draft.length > 2000) draft = draft.slice(0, 2000);
+  return draft;
+}
+
+// v0.8.2 commit drafts must survive sc.commit validation (1-500 chars, no
+// control characters). Model streams can carry CRLF line endings — \r is a
+// control char — and can run long, so normalize both before the draft lands
+// in the message textarea.
+export function cleanCommitDraft(raw) {
+  let draft = cleanSuggestDraft(raw);
+  draft = draft.replace(/\r\n?/g, '\n');
+  draft = draft.replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ');
+  draft = draft.replace(/ {2,}/g, ' ').trim();
+  if (draft.length > SC_COMMIT_MSG_MAX) {
+    draft = draft.slice(0, SC_COMMIT_MSG_MAX);
+    const lastBreak = draft.lastIndexOf('\n');
+    if (lastBreak >= 72) draft = draft.slice(0, lastBreak); // cut on a line boundary when one fits
+    draft = draft.trimEnd();
+  }
   return draft;
 }
 
@@ -714,7 +740,7 @@ async function runAssist(kind, payload) {
   } catch (error) {
     return failure('llm-stream', String(error?.message ?? error), { provider: route.provider });
   }
-  const draft = cleanSuggestDraft(raw);
+  const draft = kind === 'commit' ? cleanCommitDraft(raw) : cleanSuggestDraft(raw);
   if (draft === '') {
     return failure('empty-draft', 'The model returned no usable text.');
   }
@@ -1083,8 +1109,8 @@ async function handleScCommit(payload) {
   const repo = requireScRepo(payload);
   if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
   const message = typeof payload?.message === 'string' ? payload.message.trim() : '';
-  if (message === '' || message.length > 500 || /[\u0000-\u0008\u000b-\u001f]/.test(message)) {
-    return failure('bad-request', 'Commit message must be 1-500 characters (no control characters).');
+  if (message === '' || message.length > SC_COMMIT_MSG_MAX || /[\u0000-\u0008\u000b-\u001f]/.test(message)) {
+    return failure('bad-request', `Commit message must be 1-${SC_COMMIT_MSG_MAX} characters (no control characters).`);
   }
   const selection = await resolveSelection(repo, payload?.files);
   if (selection.error !== undefined) return selection.error;
@@ -1272,6 +1298,214 @@ async function handleScPrisma(payload) {
   debugLog(`sc.prisma repo=${repo} ran ${wanted.join(' + ')}`);
   const output = parts.join('\n').split('\n').slice(-12).join('\n').slice(0, 1600);
   return { ok: true, value: { repo, ran: wanted, output } };
+}
+
+// ---- v0.8.1 进程控制台: interactive sessions for pull / prisma ----
+//
+// The one-shot sc.pull / sc.prisma above are fire-and-forget: when Prisma asks
+// for a data-loss confirmation it fails instantly (no TTY), and a rebase
+// conflict dead-ends the same way — the user then has to open a terminal by
+// hand. These sessions keep the child alive, stream its output incrementally
+// (client polls sc.procOutput), forward typed lines to stdin, and can be
+// killed from the panel, which is enough to resolve both situations in-app:
+//   - prisma data-loss → the retry button reruns with --accept-data-loss
+//   - rebase conflict  → sc.rebaseAbort backs out of the pull
+
+const SC_PROC_MAX = 4;                 // concurrent interactive sessions
+const SC_PROC_BUFFER_CAP = 200 * 1024; // rolling tail of output
+const SC_PROC_GC_MS = 10 * 60 * 1000;  // forget finished sessions
+
+const scProcSessions = new Map(); // sessionId -> session
+
+function requireScSession(payload) {
+  const id = isRecord(payload) && typeof payload.sessionId === 'string' ? payload.sessionId : '';
+  return id !== '' && scProcSessions.has(id) ? id : null;
+}
+
+function scProcActiveCount() {
+  let count = 0;
+  for (const session of scProcSessions.values()) if (session.done !== true) count += 1;
+  return count;
+}
+
+function appendScProcOutput(session, chunk) {
+  session.output += String(chunk ?? '');
+  if (session.output.length > SC_PROC_BUFFER_CAP) {
+    session.output = session.output.slice(session.output.length - SC_PROC_BUFFER_CAP);
+  }
+}
+
+/** Tree-kill: Windows children spawn cmd shims → pnpm → node chains. */
+function killScProcTree(session, reason) {
+  if (session.done === true || session.proc === null) return;
+  const proc = session.proc;
+  session.killReason = reason;
+  try {
+    if (process.platform === 'win32' && typeof proc.pid === 'number') {
+      spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } else {
+      proc.kill('SIGTERM');
+    }
+  } catch (error) {
+    debugLog(`sc proc kill failed session=${session.id}: ${String(error?.message ?? error)}`);
+  }
+}
+
+function startScProcSession(repo, kind, options = {}) {
+  // build the command line
+  let command;
+  let file;
+  let args;
+  let timeoutMs;
+  if (kind === 'pull') {
+    command = 'git pull --rebase --autostash';
+    file = 'git';
+    args = ['-C', repo, 'pull', '--rebase', '--autostash'];
+    timeoutMs = SC_PULL_TIMEOUT_MS;
+  } else {
+    // prisma: literal constant script names (SC_PRISMA_SCRIPTS) joined with
+    // &&, same injection posture as runPnpmScript — the repo only chooses
+    // where its own package.json scripts run, never what runs.
+    const scripts = repoPackageScripts(repo);
+    const wanted = SC_PRISMA_SCRIPTS
+      .filter((script) => typeof scripts[script] === 'string' && scripts[script].trim() !== '');
+    if (wanted.length === 0) {
+      return failure('no-prisma-scripts',
+        `No ${SC_PRISMA_SCRIPTS.join(' / ')} scripts in ${repo} package.json.`, { repo });
+    }
+    const segments = wanted.map((script) => (
+      script === 'prisma:push' && options.acceptDataLoss === true
+        ? 'pnpm run prisma:push -- --accept-data-loss'
+        : `pnpm run ${script}`
+    ));
+    command = segments.join(' && ');
+    timeoutMs = SC_PRISMA_TIMEOUT_MS;
+    if (process.platform === 'win32') {
+      // pnpm on Windows resolves to a .cmd shim, which CreateProcess cannot
+      // execute directly — go through cmd.exe with a literal command string.
+      file = process.env.ComSpec ?? 'cmd.exe';
+      args = ['/d', '/s', '/c', command];
+    } else {
+      file = 'sh';
+      args = ['-c', command];
+    }
+  }
+
+  const session = {
+    id: `proc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    repo, kind, command,
+    proc: null,
+    output: '',
+    done: false,
+    exitCode: null,
+    error: null,
+    killReason: null,
+    startedAt: Date.now(),
+    timeoutTimer: null,
+  };
+  try {
+    session.proc = spawn(file, args, { cwd: repo, windowsHide: true });
+  } catch (error) {
+    return failure('spawn-error', `Failed to start "${command}": ${String(error?.message ?? error)}`, { repo, kind });
+  }
+  scProcSessions.set(session.id, session);
+  debugLog(`sc.run session=${session.id} repo=${repo} kind=${kind} cmd=${command}`);
+  session.proc.stdout?.on('data', (chunk) => appendScProcOutput(session, chunk));
+  session.proc.stderr?.on('data', (chunk) => appendScProcOutput(session, chunk));
+  session.proc.on('error', (error) => {
+    session.error = String(error?.message ?? error);
+    finishScProcSession(session, null);
+  });
+  session.proc.on('close', (code) => finishScProcSession(session, code));
+  session.timeoutTimer = setTimeout(() => {
+    if (session.done !== true) killScProcTree(session, 'timeout');
+  }, timeoutMs);
+  session.timeoutTimer.unref?.();
+  return { ok: true, value: { sessionId: session.id, repo, kind, command } };
+}
+
+function finishScProcSession(session, exitCode) {
+  if (session.done === true) return;
+  session.done = true;
+  session.exitCode = exitCode;
+  session.proc = null;
+  if (session.timeoutTimer !== null) clearTimeout(session.timeoutTimer);
+  const gcTimer = setTimeout(() => scProcSessions.delete(session.id), SC_PROC_GC_MS);
+  gcTimer.unref?.();
+  debugLog(`sc proc session=${session.id} done exit=${exitCode} reason=${session.killReason ?? '-'}`);
+}
+
+async function handleScRun(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  const kind = isRecord(payload) && payload.kind === 'prisma' ? 'prisma' : 'pull';
+  for (const session of scProcSessions.values()) {
+    if (session.done !== true && session.repo === repo) {
+      return failure('proc-busy', 'A command is already running in this repository.', { repo, sessionId: session.id });
+    }
+  }
+  if (scProcActiveCount() >= SC_PROC_MAX) {
+    return failure('proc-limit', `Too many running sessions (max ${SC_PROC_MAX}). Try again shortly.`);
+  }
+  const acceptDataLoss = isRecord(payload) && payload.acceptDataLoss === true;
+  return startScProcSession(repo, kind, { acceptDataLoss });
+}
+
+function handleScProcOutput(payload) {
+  const id = requireScSession(payload);
+  if (id === null) return failure('bad-request', 'A valid sessionId is required.');
+  const session = scProcSessions.get(id);
+  const since = isRecord(payload) && Number.isInteger(payload.since) && payload.since >= 0
+    ? Math.min(payload.since, session.output.length) : 0;
+  return {
+    ok: true,
+    value: {
+      sessionId: id,
+      output: session.output.slice(since),
+      total: session.output.length,
+      done: session.done === true,
+      exitCode: session.exitCode,
+      error: session.error,
+      killReason: session.killReason,
+      kind: session.kind,
+      command: session.command,
+    },
+  };
+}
+
+function handleScProcInput(payload) {
+  const id = requireScSession(payload);
+  if (id === null) return failure('bad-request', 'A valid sessionId is required.');
+  const session = scProcSessions.get(id);
+  if (session.done === true) return failure('proc-done', 'This command has already finished.');
+  const line = isRecord(payload) && typeof payload.line === 'string' ? payload.line.slice(0, 1024) : '';
+  if (line === '') return failure('bad-request', 'A non-empty line is required.');
+  try {
+    session.proc?.stdin?.write(`${line}\n`);
+    return { ok: true, value: { sessionId: id } };
+  } catch (error) {
+    return failure('proc-input', `Failed to write to the process: ${String(error?.message ?? error)}`, { sessionId: id });
+  }
+}
+
+function handleScProcKill(payload) {
+  const id = requireScSession(payload);
+  if (id === null) return failure('bad-request', 'A valid sessionId is required.');
+  const session = scProcSessions.get(id);
+  if (session.done !== true) killScProcTree(session, 'user');
+  return { ok: true, value: { sessionId: id } };
+}
+
+async function handleScRebaseAbort(payload) {
+  const repo = requireScRepo(payload);
+  if (repo === null) return failure('bad-request', 'A valid absolute repository path is required.');
+  try {
+    const result = await runGit(repo, ['rebase', '--abort'], { timeout: 30000 });
+    debugLog(`sc.rebaseAbort repo=${repo} ok`);
+    return { ok: true, value: { repo, output: String(result.stdout ?? '').trim() } };
+  } catch (error) {
+    return gitFailure(error, repo, 'git rebase --abort');
+  }
 }
 
 // ---- usage: per-day token usage aggregation (sidebar "today" widget) ----
@@ -1824,6 +2058,12 @@ export function apply(ctx) {
     if (tornDown) return;
     tornDown = true;
     resetUsageState();
+    // v0.8.1: interactive console sessions must not outlive the plugin —
+    // kill every still-running child (pull / prisma) so hot-swaps and
+    // uninstalls never leak processes.
+    for (const session of scProcSessions.values()) {
+      try { killScProcTree(session, 'teardown'); } catch { /* already gone */ }
+    }
     for (const stop of stops) {
       try { stop(); } catch { /* already gone */ }
     }

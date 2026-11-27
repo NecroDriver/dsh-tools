@@ -102,6 +102,24 @@ window.__ModuleLoader__.load({
         scNoPrisma: '无 prisma 脚本，已跳过',
         scBatchSkipped: '跳过',
         scBatchFailed: '失败',
+        // v0.8.1 进程控制台
+        scConsoleRun: '运行中',
+        scConsoleExit: '退出码',
+        scConsoleKilled: '已终止',
+        scConsoleTimeout: '超时终止',
+        scConsoleOutputHint: '完整输出（等宽显示，可滚动）',
+        scConsoleInputHint: '输入并回车，发送到进程 stdin',
+        scConsoleSend: '发送',
+        scConsoleKill: '终止',
+        scConsoleCopy: '复制输出',
+        scConsoleCopied: '已复制',
+        scConsoleRetryDataLoss: '接受数据损失并重试',
+        scConsoleRetryDataLossTitle: '附加 --accept-data-loss 重新运行 prisma:push（Prisma 在非交互环境提示可能丢数据时需要它）',
+        scConsoleAbortRebase: '放弃本次更新',
+        scConsoleAbortRebaseTitle: 'git rebase --abort：回到拉取前的状态，本地改动由 autostash 恢复',
+        scConsoleAbortDone: '已放弃，可重新更新代码',
+        scConsoleClose: '关闭控制台',
+        scConsoleBusy: '有命令正在运行',
         scNoMsg: '先填写或生成提交信息',
         scNoFiles: '勾选要提交的文件',
         scDiffFailed: 'diff 加载失败',
@@ -234,6 +252,24 @@ window.__ModuleLoader__.load({
         scNoPrisma: 'No prisma scripts; skipped',
         scBatchSkipped: 'skipped',
         scBatchFailed: 'failed',
+        // v0.8.1 process console
+        scConsoleRun: 'running',
+        scConsoleExit: 'exit code',
+        scConsoleKilled: 'terminated',
+        scConsoleTimeout: 'timed out',
+        scConsoleOutputHint: 'full output (monospace, scrollable)',
+        scConsoleInputHint: 'type and press Enter to send to the process stdin',
+        scConsoleSend: 'Send',
+        scConsoleKill: 'Stop',
+        scConsoleCopy: 'Copy output',
+        scConsoleCopied: 'Copied',
+        scConsoleRetryDataLoss: 'Retry with data loss accepted',
+        scConsoleRetryDataLossTitle: 'rerun prisma:push with --accept-data-loss (needed when Prisma warns about data loss outside a terminal)',
+        scConsoleAbortRebase: 'Abort this update',
+        scConsoleAbortRebaseTitle: 'git rebase --abort: back to the pre-pull state, autostash restores local changes',
+        scConsoleAbortDone: 'Aborted; you can update code again',
+        scConsoleClose: 'Close console',
+        scConsoleBusy: 'a command is already running',
         scNoMsg: 'Write or generate a commit message first',
         scNoFiles: 'Select files to commit',
         scDiffFailed: 'Failed to load diff',
@@ -484,6 +520,8 @@ window.__ModuleLoader__.load({
     const SC_COLS_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>';
     const SC_ROWS_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="12" x2="21" y2="12"/></svg>';
     const SC_CLOSE_GLYPH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    // v0.8.1 process console: square "stop" for terminating a running child.
+    const SC_STOP_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
     const SC_CHEVRON_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
     const SC_PLUS_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
     const SC_SPARK_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>';
@@ -560,6 +598,22 @@ window.__ModuleLoader__.load({
       '.dsh-tools-scDiffSplit .dsh-tools-dc{white-space:pre-wrap;overflow-wrap:anywhere;padding-right:8px;content-visibility:auto;contain-intrinsic-size:auto 18px;}',
       '.dsh-tools-scDiffSplit .dsh-tools-dc.is-add{color:var(--dsw-alias-state-success-primary,#3fb950);background:rgba(63,185,80,.10);box-shadow:inset 2px 0 0 rgba(63,185,80,.55);}',
       '.dsh-tools-scDiffSplit .dsh-tools-dc.is-del{color:var(--dsw-alias-state-error-primary,#f85149);background:rgba(248,81,73,.10);box-shadow:inset 2px 0 0 rgba(248,81,73,.55);}',
+      // v0.8.1 process console: embedded terminal-style block inside a repo
+      // group — head (command + state + stop/close), streamed output, stdin
+      // input row while running, smart action buttons after a failure.
+      '.dsh-tools-scConsole{display:flex;flex-direction:column;margin:8px 12px 2px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;overflow:hidden;background:var(--dsw-alias-bg-layer-2,rgba(0,0,0,.18));}',
+      '.dsh-tools-scConsoleHead{display:flex;align-items:center;gap:8px;padding:2px 4px 2px 10px;background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.10));}',
+      '.dsh-tools-scConsoleCmd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:10.5px;color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-scConsoleState{flex:none;font-size:10.5px;color:var(--dsw-alias-label-secondary);}',
+      '.dsh-tools-scConsoleState.is-run{color:var(--dsw-alias-brand-primary,#3b82f6);}',
+      '.dsh-tools-scConsoleState.is-ok{color:var(--dsw-alias-state-success-primary,#3fb950);}',
+      '.dsh-tools-scConsoleState.is-err{color:var(--dsw-alias-state-error-primary,#f85149);}',
+      '.dsh-tools-scConsoleOut{margin:0;padding:6px 10px;max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:11px;line-height:1.5;}',
+      '.dsh-tools-scConsoleInput{display:flex;gap:6px;align-items:center;padding:4px 8px 4px 10px;border-top:1px solid var(--dsw-alias-border-l1);}',
+      '.dsh-tools-scConsoleInput input{flex:1;min-width:0;height:24px;padding:0 7px;border-radius:5px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:inherit;font-family:var(--dsh-alias-font-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:11px;}',
+      '.dsh-tools-scConsoleInput input:focus-visible{outline:none;border-color:var(--dsw-alias-brand-primary,#3b82f6);}',
+      '.dsh-tools-scConsoleActions{display:flex;flex-wrap:wrap;gap:6px;padding:6px 10px;border-top:1px solid var(--dsw-alias-border-l1);}',
+      '.dsh-tools-scMini.is-danger{color:var(--dsw-alias-state-error-primary,#f85149);}',
       '.dsh-tools-scCommitBar{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1);}',
       '.dsh-tools-scMsgRow{display:flex;gap:6px;align-items:flex-start;}',
       '.dsh-tools-scMsg{flex:1;min-width:0;resize:vertical;min-height:34px;max-height:110px;padding:6px 8px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2,transparent);color:inherit;font:inherit;font-size:12.5px;}',
@@ -2006,6 +2060,8 @@ window.__ModuleLoader__.load({
           // Preference persists via localStorage when available (guarded —
           // the render-test sandbox has no DOM storage).
           const DIFF_STYLE_KEY = 'dsh-tools.scDiffStyle';
+          // v0.8.1 process console: how often the client polls sc.procOutput.
+          const SC_POLL_MS = 400;
           const readDiffStyle = () => {
             try {
               return globalThis.localStorage?.getItem(DIFF_STYLE_KEY) === 'split' ? 'split' : 'unified';
@@ -2151,6 +2207,10 @@ window.__ModuleLoader__.load({
               setRepos(null);
               setReposError('');
               setBatchNote('');
+              // v0.8.1: a rescan resets the panel — drop console sessions too
+              // (running poll chains stop themselves on the sessionId check).
+              consolesRef.current = {};
+              syncConsole();
               // Let the sessions capture settle (hot-reload race) so the scan
               // targets the workspace the user is in, not nothing. Skipped
               // entirely (zero extra microtask) once the service is captured.
@@ -2368,47 +2428,179 @@ window.__ModuleLoader__.load({
               }
             };
 
-            // v0.7.5 更新代码 / 更新数据库 — per-repo and (via runBatch) sweep-
-            // all variants. Outcomes resolve to {ok} / {skipped} so the batch
-            // loop can count them; notes/errors land in the group's busy row.
-            const doPull = async (repo) => {
-              if (busy[repo.id]?.op) return { ok: false };
-              setBusyState(repo.id, { op: 'pull', error: '', note: t('scPulling') });
-              try {
-                const r = await call('sc.pull', { repo: repo.path });
-                if (r?.ok === true) {
-                  setBusyState(repo.id, { op: null, note: t('scPulled') });
-                  void refreshRepo(repo);
-                  return { ok: true };
+            // v0.8.1 进程控制台 — 单仓「更新代码/更新数据库」不再一次性
+            // fire-and-forget（Prisma data-loss 确认、rebase 冲突都只能手
+            // 动开终端），改为 sc.run 交互会话：输出实时流式追加、可输入
+            // stdin、可终止。consolesRef 持真值（轮询链同步读写），镜像
+            // state 只触发渲染。批量 runBatch 复用同一入口逐仓顺序执行。
+            const consolesRef = React.useRef({});
+            const [consoleMap, setConsoleMap] = React.useState({});
+            const syncConsole = () => setConsoleMap({ ...consolesRef.current });
+            const patchConsole = (repoId, patch) => {
+              const entry = consolesRef.current[repoId];
+              if (entry === undefined) return;
+              consolesRef.current[repoId] = { ...entry, ...patch };
+              syncConsole();
+            };
+
+            // Poll chain (setTimeout 链而非 interval，面板卸载/刷新后
+            // sessionId 比对失效即自动停). Resolves the final outcome.
+            const pollSession = (repoId, sessionId) => new Promise((resolve) => {
+              const step = async () => {
+                const entry = consolesRef.current[repoId];
+                if (entry === undefined || entry.sessionId !== sessionId) {
+                  resolve({ ok: false, error: '' });
+                  return;
                 }
-                setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
-                return { ok: false };
+                let r;
+                try {
+                  r = await call('sc.procOutput', { sessionId, since: entry.output.length });
+                } catch (error) {
+                  resolve({ ok: false, error: error?.message ?? String(error) });
+                  return;
+                }
+                if (r?.ok !== true) {
+                  resolve({ ok: false, error: fmtError(r?.error, t('scFailed')) });
+                  return;
+                }
+                const v = r.value ?? {};
+                patchConsole(repoId, {
+                  output: entry.output + String(v.output ?? ''),
+                  done: v.done === true,
+                  exitCode: v.exitCode ?? null,
+                  error: v.error ?? null,
+                  killReason: v.killReason ?? null,
+                  command: typeof v.command === 'string' && v.command !== '' ? v.command : entry.command,
+                  kind: typeof v.kind === 'string' && v.kind !== '' ? v.kind : entry.kind,
+                });
+                if (v.done === true) {
+                  resolve({
+                    ok: v.exitCode === 0,
+                    exitCode: v.exitCode ?? null,
+                    error: v.error ?? null,
+                    killReason: v.killReason ?? null,
+                  });
+                  return;
+                }
+                globalThis.setTimeout(step, SC_POLL_MS);
+              };
+              void step();
+            });
+
+            const runRepoSession = async (repo, kind, options = {}) => {
+              if (busy[repo.id]?.op) return { ok: false };
+              const existing = consolesRef.current[repo.id];
+              if (existing !== undefined && existing.done !== true) return { ok: false };
+              setBusyState(repo.id, { op: kind, error: '', note: t(kind === 'pull' ? 'scPulling' : 'scDbRunning') });
+              let r;
+              try {
+                r = await call('sc.run', {
+                  repo: repo.path,
+                  kind,
+                  acceptDataLoss: options.acceptDataLoss === true,
+                });
               } catch (error) {
                 setBusyState(repo.id, { op: null, error: error?.message ?? String(error) });
                 return { ok: false };
               }
-            };
-
-            const doPrisma = async (repo) => {
-              if (busy[repo.id]?.op) return { ok: false };
-              setBusyState(repo.id, { op: 'prisma', error: '', note: t('scDbRunning') });
-              try {
-                const r = await call('sc.prisma', { repo: repo.path });
-                if (r?.ok === true) {
-                  setBusyState(repo.id, { op: null, note: t('scDbDone') });
-                  void refreshRepo(repo);
-                  return { ok: true };
-                }
+              if (r?.ok !== true) {
                 if (r?.error?.code === 'no-prisma-scripts') {
                   setBusyState(repo.id, { op: null, note: t('scNoPrisma') });
                   return { ok: false, skipped: true };
                 }
                 setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
                 return { ok: false };
+              }
+              consolesRef.current[repo.id] = {
+                sessionId: r.value.sessionId,
+                repo,
+                kind: r.value.kind,
+                command: r.value.command,
+                output: '',
+                done: false,
+                exitCode: null,
+                error: null,
+                killReason: null,
+                input: '',
+              };
+              syncConsole();
+              const outcome = await pollSession(repo.id, r.value.sessionId);
+              if (outcome.ok === true) {
+                setBusyState(repo.id, { op: null, note: t(kind === 'pull' ? 'scPulled' : 'scDbDone') });
+                void refreshRepo(repo);
+              } else {
+                let reason = outcome.error ?? '';
+                if (outcome.killReason === 'user') reason = t('scConsoleKilled');
+                else if (outcome.killReason === 'timeout') reason = t('scConsoleTimeout');
+                else if (outcome.exitCode !== null && outcome.exitCode !== undefined) reason = `${t('scConsoleExit')} ${outcome.exitCode}`;
+                setBusyState(repo.id, { op: null, error: reason === '' ? t('scFailed') : reason });
+              }
+              return outcome;
+            };
+
+            // v0.7.5 更新代码 / 更新数据库 — per-repo and (via runBatch) sweep-
+            // all variants. v0.8.1: both now go through interactive sessions.
+            // Outcomes resolve to {ok} / {skipped} so the batch loop can count
+            // them; live output and failure details land in the group console.
+            const doPull = (repo) => runRepoSession(repo, 'pull');
+            const doPrisma = (repo) => runRepoSession(repo, 'prisma');
+
+            // v0.8.1 console actions
+            const doRetryDataLoss = (repo) => {
+              const entry = consolesRef.current[repo.id];
+              if (entry !== undefined && entry.done !== true) return;
+              void runRepoSession(repo, 'prisma', { acceptDataLoss: true });
+            };
+            const doAbortRebase = async (repo) => {
+              setBusyState(repo.id, { op: null, error: '', note: t('scConsoleRun') });
+              try {
+                const r = await call('sc.rebaseAbort', { repo: repo.path });
+                if (r?.ok === true) {
+                  setBusyState(repo.id, { op: null, note: t('scConsoleAbortDone') });
+                  void refreshRepo(repo);
+                } else {
+                  setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
+                }
               } catch (error) {
                 setBusyState(repo.id, { op: null, error: error?.message ?? String(error) });
-                return { ok: false };
               }
+            };
+            const doKillSession = async (repo) => {
+              const entry = consolesRef.current[repo.id];
+              if (entry === undefined || entry.done === true) return;
+              try {
+                await call('sc.procKill', { sessionId: entry.sessionId });
+              } catch { /* the poll chain observes the exit */ }
+            };
+            const doSendInput = async (repo) => {
+              const entry = consolesRef.current[repo.id];
+              if (entry === undefined || entry.done === true) return;
+              const line = entry.input.trim();
+              if (line === '') return;
+              try {
+                await call('sc.procInput', { sessionId: entry.sessionId, line });
+                patchConsole(repo.id, { input: '' });
+              } catch { /* next poll surfaces the state */ }
+            };
+            const doCopyConsole = async (repo) => {
+              const entry = consolesRef.current[repo.id];
+              if (entry === undefined) return;
+              const text = `$ ${entry.command}\n${entry.output}`;
+              try {
+                await globalThis.navigator?.clipboard?.writeText?.(text);
+                patchConsole(repo.id, { copied: true });
+                globalThis.setTimeout(() => {
+                  if (consolesRef.current[repo.id]?.copied === true) {
+                    patchConsole(repo.id, { copied: false });
+                  }
+                }, 1500);
+              } catch { /* clipboard unavailable */ }
+            };
+            const doCloseConsole = (repo) => {
+              const entry = consolesRef.current[repo.id];
+              if (entry !== undefined && entry.done !== true) return;
+              delete consolesRef.current[repo.id];
+              syncConsole();
             };
 
             // Top-bar 更新代码/更新数据库 buttons sweep EVERY listed repo
@@ -2500,6 +2692,72 @@ window.__ModuleLoader__.load({
                     onClick: () => { void doPush(repo); },
                   }, icon(SC_PUSH_GLYPH))),
                 isOpen ? React.createElement('div', { className: 'dsh-tools-scFiles' },
+                  // v0.8.1 process console (运行中或刚结束的 sc.run 会话)
+                  consoleMap[repo.id] !== undefined ? (() => {
+                    const cEntry = consoleMap[repo.id];
+                    const cDone = cEntry.done === true;
+                    const cOk = cDone && cEntry.exitCode === 0 && (cEntry.error ?? '') === '';
+                    const wantDataLoss = cDone && !cOk && cEntry.kind === 'prisma'
+                      && /--accept-data-loss/i.test(cEntry.output);
+                    const wantAbort = cDone && !cOk && cEntry.kind === 'pull'
+                      && /CONFLICT|could not apply|Merge conflict/i.test(cEntry.output);
+                    const stateText = cDone
+                      ? (cEntry.killReason === 'user' ? t('scConsoleKilled')
+                        : cEntry.killReason === 'timeout' ? t('scConsoleTimeout')
+                          : `${t('scConsoleExit')} ${cEntry.exitCode ?? '?'}`)
+                      : t('scConsoleRun');
+                    return React.createElement('div', { className: 'dsh-tools-scConsole' },
+                      React.createElement('div', { className: 'dsh-tools-scConsoleHead' },
+                        React.createElement('span', { className: 'dsh-tools-scConsoleCmd', title: cEntry.command }, `$ ${cEntry.command}`),
+                        React.createElement('span', { className: `dsh-tools-scConsoleState${cDone ? (cOk ? ' is-ok' : ' is-err') : ' is-run'}` }, stateText),
+                        cDone ? React.createElement('button', {
+                          type: 'button',
+                          className: 'dsh-tools-scIconBtn',
+                          title: t('scConsoleClose'),
+                          'aria-label': t('scConsoleClose'),
+                          onClick: () => { doCloseConsole(repo); },
+                        }, icon(SC_CLOSE_GLYPH))
+                          : React.createElement('button', {
+                            type: 'button',
+                            className: 'dsh-tools-scIconBtn',
+                            title: t('scConsoleKill'),
+                            'aria-label': t('scConsoleKill'),
+                            onClick: () => { void doKillSession(repo); },
+                          }, icon(SC_STOP_GLYPH))),
+                      React.createElement('pre', { className: 'dsh-tools-scConsoleOut', title: t('scConsoleOutputHint') },
+                        cEntry.output === '' ? '…' : cEntry.output),
+                      cDone !== true ? React.createElement('div', { className: 'dsh-tools-scConsoleInput' },
+                        React.createElement('input', {
+                          value: cEntry.input,
+                          placeholder: t('scConsoleInputHint'),
+                          'aria-label': t('scConsoleInputHint'),
+                          onChange: (event) => { patchConsole(repo.id, { input: event?.target?.value ?? '' }); },
+                          onKeyDown: (event) => { if (event?.key === 'Enter') { void doSendInput(repo); } },
+                        }),
+                        React.createElement('button', {
+                          type: 'button',
+                          className: 'dsh-tools-scMini',
+                          onClick: () => { void doSendInput(repo); },
+                        }, React.createElement('span', null, t('scConsoleSend')))) : null,
+                      (wantDataLoss || wantAbort || cDone) ? React.createElement('div', { className: 'dsh-tools-scConsoleActions' },
+                        wantDataLoss ? React.createElement('button', {
+                          type: 'button',
+                          className: 'dsh-tools-scMini is-danger',
+                          title: t('scConsoleRetryDataLossTitle'),
+                          onClick: () => { doRetryDataLoss(repo); },
+                        }, icon(SC_DB_GLYPH), React.createElement('span', null, t('scConsoleRetryDataLoss'))) : null,
+                        wantAbort ? React.createElement('button', {
+                          type: 'button',
+                          className: 'dsh-tools-scMini is-danger',
+                          title: t('scConsoleAbortRebaseTitle'),
+                          onClick: () => { void doAbortRebase(repo); },
+                        }, icon(SC_REVERT_GLYPH), React.createElement('span', null, t('scConsoleAbortRebase'))) : null,
+                        cDone ? React.createElement('button', {
+                          type: 'button',
+                          className: 'dsh-tools-scMini',
+                          onClick: () => { void doCopyConsole(repo); },
+                        }, React.createElement('span', null, cEntry.copied === true ? t('scConsoleCopied') : t('scConsoleCopy'))) : null) : null);
+                  })() : null,
                   st.error !== undefined ? React.createElement('div', { className: 'dsh-tools-scNote is-error', style: { padding: '6px 12px' } }, st.error) : null,
                   st.error === undefined && st.loading ? React.createElement('div', { className: 'dsh-tools-scNote', style: { padding: '6px 12px' } }, '…') : null,
                   st.error === undefined && !st.loading && st.files.length === 0

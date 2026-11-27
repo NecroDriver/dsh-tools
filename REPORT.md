@@ -1,4 +1,4 @@
-# dsh-tools 交付报告（2026-11-26，v0.8.0）
+# dsh-tools 交付报告（2026-11-27，v0.8.2）
 
 ## 状态
 
@@ -27,6 +27,62 @@
 - v0.7.11（续）：**工具设置新增「新会话默认展开右侧栏」开关**（默认开；用户需求：DSH 本身没有该设置，新增会话一律收起）——客户端 `registerSidebarAutoOpen` 监听 `sidebarRight.mounted` + `sessions.list`，只对"新"会话（启动基线之后出现、或 `blank === true` 的新建会话）调用 `sidebarRight.toggleExpanded()`，每个会话仅一次、子代理会话跳过、启动时恢复出来的既有会话保持持久化状态（启动恰好落在空白新会话上则视为新会话照常展开）、焦点留在输入框（见下节）。
 
 - v0.8.0：**资源控制「撤销改动」**（用户需求：「dsh-tools需要支持选中文件撤销改动，单文件撤销改动，如果本身是新增，就直接删除」）——每个文件行悬停显现撤销小图标（单文件），提交栏新增红色「撤销」按钮（撤销全部勾选）；确认弹层分两栏列出两种处置（还原 M/D/R vs 删除新增）；Host `sc.revert` 复用 `resolveSelection` 防陈旧/防遍历；顺带修复 untracked 目录折叠问题（`git status` 改 `-uall`，嵌套新增文件逐个列出）（见下节）。
+- v0.8.1：**资源控制「进程控制台」**（用户需求：同步数据库报错要手动跑命令、拉代码会冲突，「最好能接个终端显示和输入支持」）——单仓「更新代码/更新数据库」从一次性调用升级为交互式进程会话：分组内嵌终端式控制台（实时输出流 + 运行中可输 stdin + 终止按钮 + 退出码），prisma 数据损失错误一键「接受数据损失并重试」（`-- --accept-data-loss`），rebase 冲突一键「放弃本次更新」（`git rebase --abort`），另有「复制输出」；批量（标题行）按钮沿用同会话机制逐仓执行（见下节）。
+- v0.8.2：**修复 AI 生成 commit message 撞校验**（用户反馈：AI 生成的提交信息被 `[bad-request] Commit message must be 1-500 characters (no control characters)` 拒绝）——系统提示词补硬性长度约束（首行 ≤72、全文 ≤400 字符、正文只挑要点不逐文件罗列）；新增 `cleanCommitDraft` 把 CRLF/CR 归一为 LF（`\r` 是控制字符，正是被拒的一类根因）、剥离残余控制字符、超 500 按行边界截断保首行（见下节）。
+
+## v0.8.2（2026-11-27）
+
+### 修复：AI 生成的 commit message 撞提交校验
+
+用户反馈原文：AI 生成提交信息后点提交报 `[bad-request] Commit message must be 1-500 characters (no control characters).`（当时正提交 dsh-tools v0.8.1 的 11 个文件）。
+
+**两个根因**：
+1. `COMMIT_SYSTEMS` 系统提示词没有任何总长约束——大 diff 面前模型会写很长的正文，轻松超过 500 字符上限（`sc.commit` 行为正确，是生成侧越界）。
+2. `cleanSuggestDraft`（suggest/optimize/commit 共用的清洗函数）不处理行结束符——模型流可携带 CRLF，`\r`（U+000D）落在提交校验的控制字符区间 `[\u0000-\u0008\u000b-\u001f]` 内，即使总长合规也会被拒。
+
+**修复**（全在 index.js）：
+- `COMMIT_SYSTEMS` zh/en 补硬性长度约束：首行 ≤72 字符；全文（首行+空行+正文）≤400 字符（留 100 字符余量给 500 上限）；正文只挑 2~4 个关键点、绝不逐文件罗列；小改动只写首行。其余风格指令不变。
+- 新增 `cleanCommitDraft(raw)`（仅 commit 管道使用，suggest/optimize 不受影响）：在 `cleanSuggestDraft` 去围栏/引号基础上——CRLF/CR 归一为 `\n`；剥离残余控制字符（换空白）；双空格折叠；超 500 时先截到 500 再回退到最后一个行边界（边界 ≥72 时）保住完整首行。`runAssist` 对 `kind === 'commit'` 改走此清洗。
+- `handleScCommit` 的 500 字面量改为共享常量 `SC_COMMIT_MSG_MAX`（生成侧与校验侧同一预算）。
+- 版本 v0.8.2（MODULE_VERSION + package.json）。
+
+**测试**（test-sc.mjs 新增 4 项，全量 59 项 ALL CHECKS PASSED）：
+- CRLF 草稿归一：fake llm 产出 `feat: multi\r\n\r\nbody one\r\nbody two\r` → 草稿无任何控制字符且换行为 `\n`；
+- 系统提示词含硬性长度约束（400/72 断言）；
+- 700 字符草稿（超长首行 + 超长正文）→ 截断保首行（106 字符、行边界切割）；
+- `sc.commit` 对 501 字符消息仍拒绝（校验侧行为不回归）。
+- render 84/84、usage 23、smoke、node --check 全绿。
+
+**生效方式**：仅 Host 侧（index.js）改动——「更多 → 重载插件」或重启 DSH 生效；客户端无改动无需 F5。
+
+## v0.8.1（2026-11-27）
+
+### 资源控制：进程控制台（终端式输出 + stdin 输入 + 失败一键处置）
+
+用户需求原文：「我点击同步数据库，出现异常，需要手动输入命令解决。拉新代码通用会出现冲突的情况，也会导致失败。最好能接个终端显示和出入支持。但是放在哪里，怎么展示这些需要设计下。」（附图：prisma push 报 `Use the --accept-data-loss flag`；用户手动终端跑命令输 `yes` 成功）
+
+**设计**（dsh-doc 查证：DSH 无终端 slot、无 Host→Client 推送通道，只能 RPC 请求-响应 + 轮询）：
+- 控制台放在**仓库分组内**（分组头下方、文件列表上方）——终端上下文跟仓库走，天然解决"放哪里"。
+- 深底等宽输出块（自动滚底、max-height 220px）；运行中显示 stdin 输入行（回车发送）+ 停止按钮；结束后显示 `退出码 N` 状态 + 关闭按钮。
+- 失败智能操作：输出含 `--accept-data-loss` → 红色「接受数据损失并重试」（Prisma 非 TTY 不读 stdin，实证 pipe 下直接报 flag 提示，故用 flag 重跑而非模拟输入）；输出含 `CONFLICT` → 红色「放弃本次更新」；恒有「复制输出」。
+
+**Host（index.js）**：
+- 新 RPC 五个：`sc.run`（启动会话：pull=spawn git 直连；prisma=cmd.exe `/d /s /c` 字面常量命令串 `pnpm run prisma:generate && pnpm run prisma:push [-- --accept-data-loss]`，同 v0.7.5 的注入面姿态；同 repo 活跃会话 → `proc-busy`，并发上限 4 → `proc-limit`）、`sc.procOutput`（`since` 增量返回 output/total/done/exitCode/error/killReason/kind/command）、`sc.procInput`（行写入子进程 stdin，cap 1024）、`sc.procKill`（Windows `taskkill /pid /T /F` 树杀 cmd→pnpm→node 全链）、`sc.rebaseAbort`（`git rebase --abort`）。
+- 会话基建：`scProcSessions` Map；输出 ring buffer 200KB 保尾；超时（pull 5min / prisma 10min）自动树杀并标 `killReason='timeout'`；结束后 10min GC（`unref` 不阻退出）；**teardown 时全量树杀**（插件卸载/热重载不留孤儿进程）。
+- 旧 `sc.pull`/`sc.prisma` 保留（零调用方——客户端已全走会话；保留仅为兼容潜在外部调用）。
+
+**Client（client.js）**：
+- `consolesRef`（真值）+ `consoleMap`（state 镜像）；`pollSession` 400ms 轮询链（sessionId 比对失效即自停，防重扫后旧链写新会话）；`runRepoSession` 统一入口：单仓按钮（pull/prisma）与批量 `runBatch` 逐仓顺序执行都走它；成功 note `代码已更新`/`数据库已更新` + `refreshRepo`；失败 note 优先显示 `已终止`/`超时终止`，否则 `退出码 N`。
+- `loadAll`（重扫）清空 console 会话——面板重置语义。
+- 控制台 UI：命令行头（`$ command` 椭圆截断 + 三态色状态 + 停止/关闭按钮）、输出 pre、运行中输入行（Enter 发送 + 发送按钮）、动作行（数据损失重试 / 放弃 rebase / 复制输出，`is-danger` 红）。
+- 字典 zh/en 各 18 键；`SC_STOP_GLYPH`（方形停止钮）；CSS 16 条规则。
+
+**测试**：
+- test-sc.mjs 新增 16 项：交互 stdin 端到端（ask.mjs 脚本 prompt→`sc.procInput 'y'`→exit 0 `YOU SAID y`；answer n→exit 3 透传）、`since` 增量不重放、`proc-done`/`bad-request` 守卫、`proc-busy`（同 repo 二连）、`proc-limit`（4 sleep 会话占满后第 5 个拒绝）、`procKill` 树杀（killReason='user'、exit 1）、`acceptDataLoss` 拼进命令行（实测 pnpm/cmd 链 stdin 贯通）、真实 rebase 冲突仓库（pull 会话 exit 1 + CONFLICT 输出 → `sc.rebaseAbort` → 无 rebase 残留 + 工作区干净）。全量 54 项 ALL CHECKS PASSED。
+- test-client-render.cjs 更新至 84 项 PASS：sc.run stub 返回会话、procOutput 奇偶轮模拟增量流（验证客户端增量拼接）、console 块/状态/复制动作渲染断言、批量计数改数 `sc.run`。踩坑（v0.7.5 老坑再现）：console 断言必须在 `runEffects` 前采样——fake harness 每步重放 mount effect → `loadAll` 会清刚建立的会话。
+- smoke / test-usage 23 / node --check 全绿。
+
+**生效方式**：profile `node_modules\dsh-tools` 为 Junction 直连本仓库——Host（index.js）改动需重启 DSH（或插件页重载），Client（client.js）改动刷新页面即可。
 
 ## v0.8.0（2026-11-26）
 
