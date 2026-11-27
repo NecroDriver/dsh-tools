@@ -446,8 +446,10 @@ const runEffects = async () => {
   check('commitMessage got selection', JSON.stringify(msgCall?.payload.files) === JSON.stringify(['src/mod.js']));
 
   // 5) commit with the AI message
-  const commitBtn = findAll(tree, byClass('dsh-tools-scBtn is-primary'))[0]
-    ?? findAll(tree, (n) => byClass('dsh-tools-scBtn')(n) && String(n.props.className).includes('is-primary'))[0];
+  // v0.8.3: 提交并推送 took over is-primary; v0.8.4 gave plain 提交 an icon
+  // too, so locate it by its span text child like the other buttons.
+  const commitBtn = findAll(tree, byClass('dsh-tools-scBtn'))
+    .find((b) => b.children.some((c) => c.children?.[0] === '提交'));
   check('commit button present', commitBtn !== undefined);
   commitBtn.props.onClick();
   await settle(); await settle();
@@ -456,6 +458,26 @@ const runEffects = async () => {
   check('commit sent only selected file', JSON.stringify(commitCall?.payload.files) === JSON.stringify(['src/mod.js']));
   check('commit message forwarded', commitCall?.payload.message === 'feat: add things');
   check('committed note shows hash', findAll(tree, (n) => n.children[0] === '已提交 abc1234').length === 1);
+
+  // 5b) v0.8.3 提交并推送 — one click fires sc.commit then sc.push
+  const reboxes = findAll(tree, (n) => n.type === 'input' && n.props.type === 'checkbox');
+  reboxes[0].props.onChange();
+  await settle();
+  await step();
+  const combinedBtn = findAll(tree, byClass('dsh-tools-scBtn'))
+    .find((b) => b.children.some((c) => c.children?.[0] === '提交并推送'));
+  check('commit-and-push button present as primary', combinedBtn !== undefined
+    && String(combinedBtn.props.className).includes('is-primary'));
+  const beforeCombined = calls.length;
+  combinedBtn.props.onClick();
+  await settle(); await settle(); await settle();
+  await step();
+  const combinedCommit = calls.slice(beforeCombined).find((c) => c.method === 'sc.commit');
+  const combinedPush = calls.slice(beforeCombined).find((c) => c.method === 'sc.push');
+  check('commit-and-push: one click fires commit then push',
+    combinedCommit !== undefined && combinedPush !== undefined
+    && calls.indexOf(combinedCommit) < calls.indexOf(combinedPush));
+  check('commit-and-push final note', findAll(tree, (n) => n.children[0] === '已提交 abc1234 · 已推送').length === 1);
 
   // 6) push from the group header
   const pushBtn = findAll(tree, byClass('dsh-tools-scIconBtn')).find((b) => b.props.title === '推送');

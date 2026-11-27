@@ -84,6 +84,7 @@ window.__ModuleLoader__.load({
         scGenMsg: 'AI 生成',
         scGenMsging: '生成中…',
         scCommit: '提交',
+        scCommitPush: '提交并推送',
         scCommitting: '提交中…',
         scCommitted: '已提交',
         scPush: '推送',
@@ -234,6 +235,7 @@ window.__ModuleLoader__.load({
         scGenMsg: 'AI generate',
         scGenMsging: 'Generating…',
         scCommit: 'Commit',
+        scCommitPush: 'Commit & push',
         scCommitting: 'Committing…',
         scCommitted: 'Committed',
         scPush: 'Push',
@@ -525,6 +527,8 @@ window.__ModuleLoader__.load({
     const SC_CHEVRON_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
     const SC_PLUS_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
     const SC_SPARK_GLYPH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>';
+    // v0.8.4 commit = check mark ("this is done, land it").
+    const SC_COMMIT_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
     const SC_PULL_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
     const SC_DB_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>';
     const SC_REVERT_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>';
@@ -2338,7 +2342,10 @@ window.__ModuleLoader__.load({
               }
             };
 
-            const doCommit = async (repo) => {
+            const doCommit = async (repo, opts) => {
+              // v0.8.3 提交并推送 — opts.push runs sc.push right after the
+              // commit lands, so one click finishes both steps.
+              const pushAfter = opts?.push === true;
               if (busy[repo.id]?.op) return;
               const files = [...selectedSet(repo.id)];
               const message = (msgMap[repo.id] ?? '').trim();
@@ -2349,9 +2356,27 @@ window.__ModuleLoader__.load({
                 const r = await call('sc.commit', { repo: repo.path, files, message });
                 if (r?.ok === true) {
                   const hash = typeof r.value?.commit === 'string' ? r.value.commit : '';
-                  setBusyState(repo.id, { op: null, note: `${t('scCommitted')} ${hash}`.trim() });
+                  const base = `${t('scCommitted')} ${hash}`.trim();
                   clearSelection(repo.id);
                   setDiffKey(null);
+                  if (!pushAfter) {
+                    setBusyState(repo.id, { op: null, note: base });
+                    void refreshRepo(repo);
+                    return;
+                  }
+                  setBusyState(repo.id, { op: 'push', error: '', note: `${base} · ${t('scPushing')}` });
+                  let pushed = false;
+                  let pushError = '';
+                  try {
+                    const pr = await call('sc.push', { repo: repo.path });
+                    pushed = pr?.ok === true;
+                    if (!pushed) pushError = fmtError(pr?.error, t('scFailed'));
+                  } catch (error) {
+                    pushError = error?.message ?? String(error);
+                  }
+                  setBusyState(repo.id, pushed
+                    ? { op: null, note: `${base} · ${t('scPushed')}` }
+                    : { op: null, note: base, error: pushError });
                   void refreshRepo(repo);
                 } else {
                   setBusyState(repo.id, { op: null, error: fmtError(r?.error, t('scFailed')) });
@@ -2850,10 +2875,18 @@ window.__ModuleLoader__.load({
                       }, icon(SC_SPARK_GLYPH), React.createElement('span', null, t('scGenMsg'))),
                       React.createElement('button', {
                         type: 'button',
-                        className: 'dsh-tools-scBtn is-primary',
+                        className: 'dsh-tools-scBtn',
                         disabled: anyBusy,
                         onClick: () => { void doCommit(repo); },
-                      }, t('scCommit')))) : null) : null);
+                      }, icon(SC_COMMIT_GLYPH), React.createElement('span', null, t('scCommit'))),
+                      // v0.8.3 提交并推送 — commit the selection, then push,
+                      // one click instead of two.
+                      React.createElement('button', {
+                        type: 'button',
+                        className: 'dsh-tools-scBtn is-primary',
+                        disabled: anyBusy,
+                        onClick: () => { void doCommit(repo, { push: true }); },
+                      }, icon(SC_PUSH_GLYPH), React.createElement('span', null, t('scCommitPush'))))) : null) : null);
             });
 
             return React.createElement('div', {

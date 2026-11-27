@@ -87,7 +87,11 @@ the right sidebar pane:
   this repository's own style: the Host reads the last 20 commit subjects as a
   style reference and includes the per-file diffs of exactly the selected
   files. The draft is editable before committing.
-- After committing, a **push** button appears on the group header.
+- After committing, a **push** button appears on the group header — or skip
+  the second click entirely: the commit bar's primary **提交并推送 /
+  Commit & push** button commits the selection and immediately pushes, with
+  the status line reading "已提交 hash · 推送中… → 已提交 hash · 已推送"
+  (a push failure keeps the "committed" fact and shows the push error).
 - **更新代码 / Update code** and **更新数据库 / Update database** buttons sit
   both in the panel's header row, right beside the refresh button (batched
   over every listed repository, with live progress and a summary note in a
